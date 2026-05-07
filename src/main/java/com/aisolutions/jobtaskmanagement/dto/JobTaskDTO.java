@@ -55,8 +55,8 @@ public class JobTaskDTO {
         private String        taskTitle;
         private String        taskType;
         private String        taskDescription;
-        private Long          assignorStaffId;
-        private Long          assigneeStaffId;
+        private Integer      assignorStaffId;
+        private Integer      assigneeStaffId;
         private String        priority;
         private LocalDateTime dueDate;
         private BigDecimal    estimatedHours;
@@ -70,7 +70,7 @@ public class JobTaskDTO {
         private String        taskTitle;
         private String        taskType;
         private String        taskDescription;
-        private Long          assigneeStaffId;
+        private Integer      assigneeStaffId;
         private String        priority;
         private LocalDateTime dueDate;
         private BigDecimal    estimatedHours;

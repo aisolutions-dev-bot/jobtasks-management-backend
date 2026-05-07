@@ -97,7 +97,7 @@ public class JobTaskService {
                     } else if (viewDept && staff != null && staff.getDepartment() != null) {
                         tasksUni = taskRepo.findByDepartment(staff.getDepartment());
                     } else if (staff != null) {
-                        tasksUni = taskRepo.findByStaffCode(staff.getCode());
+                        tasksUni = taskRepo.findByStaffCode(staff.getCode().intValue());
                     } else {
                         // No staff resolved — return empty
                         return Uni.createFrom().item(List.of());
@@ -121,8 +121,8 @@ public class JobTaskService {
     @WithTransaction
     public Uni<JobTaskResponse> create(CreateJobTaskRequest req) {
         return Uni.combine().all()
-                .unis(staffRepo.findById(req.getAssignorStaffId()),
-                      staffRepo.findById(req.getAssigneeStaffId()))
+                .unis(staffRepo.findById(req.getAssignorStaffId().longValue()),
+                      staffRepo.findById(req.getAssigneeStaffId().longValue()))
                 .asTuple()
                 .flatMap(tuple -> {
                     Staff assignor = tuple.getItem1();
@@ -237,8 +237,8 @@ public class JobTaskService {
 
     private Uni<JobTaskResponse> enrichSingle(JobTask task) {
         return Uni.combine().all()
-                .unis(staffRepo.findById(task.getAssignorStaffId()),
-                      staffRepo.findById(task.getAssigneeStaffId()))
+                .unis(staffRepo.findById(task.getAssignorStaffId().longValue()),
+                      staffRepo.findById(task.getAssigneeStaffId().longValue()))
                 .asTuple()
                 .map(t -> toResponse(task, t.getItem1(), t.getItem2()));
     }

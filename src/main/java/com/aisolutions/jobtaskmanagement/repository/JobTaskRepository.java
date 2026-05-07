@@ -37,7 +37,7 @@ public class JobTaskRepository implements PanacheRepositoryBase<JobTask, Long> {
      * Used when both a2401.02=0 AND a2401.01=0.
      * staffCode = m03Staff.Code (the numeric PK).
      */
-    public Uni<List<JobTask>> findByStaffCode(Long staffCode) {
+    public Uni<List<JobTask>> findByStaffCode(Integer staffCode) {
         return list(
             "jobStatus != 'Cancelled' AND (assignorStaffId = ?1 OR assigneeStaffId = ?1) " +
             "ORDER BY dueDate ASC",
