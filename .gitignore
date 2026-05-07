@@ -9,3 +9,6 @@ build/
 *.iws
 .DS_Store
 target/
+
+# Local environment
+.env
