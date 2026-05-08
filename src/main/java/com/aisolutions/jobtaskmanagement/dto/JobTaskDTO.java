@@ -58,7 +58,7 @@ public class JobTaskDTO {
         private Integer      assignorStaffId;
         private Integer      assigneeStaffId;
         private String        priority;
-        private LocalDateTime dueDate;
+        private java.time.LocalDate dueDate;
         private BigDecimal    estimatedHours;
         private String        entryStaff;
     }
