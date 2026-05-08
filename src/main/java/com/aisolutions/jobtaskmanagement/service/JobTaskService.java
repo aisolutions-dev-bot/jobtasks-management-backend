@@ -83,11 +83,9 @@ public class JobTaskService {
                                    .onFailure().recoverWithNull()
                         : Uni.createFrom().nullItem();
 
-        return Uni.combine().all().unis(accessUni, staffUni).asTuple()
-                .flatMap(tuple -> {
-                    List<GroupAuthorityAccessDTO> accesses = tuple.getItem1();
-                    Staff staff = tuple.getItem2();
-
+        // Sequential chain — avoid Uni.combine parallel query conflict on reactive MySQL
+        return accessUni.flatMap(accesses ->
+                staffUni.flatMap(staff -> {
                     boolean viewAll  = hasAccess(accesses, ACCESS_VIEW_ALL);
                     boolean viewDept = hasAccess(accesses, ACCESS_VIEW_DEPT);
 
@@ -99,12 +97,12 @@ public class JobTaskService {
                     } else if (staff != null) {
                         tasksUni = taskRepo.findByStaffId(staff.getStaffId());
                     } else {
-                        // No staff resolved — return empty
-                        return Uni.createFrom().item(List.of());
+                        // staffCode not provided — return all active tasks as fallback
+                        tasksUni = taskRepo.findAllActive();
                     }
 
                     return tasksUni.flatMap(tasks -> enrichWithStaff(tasks));
-                });
+                }));
     }
 
     // ─── Single task ──────────────────────────────────────────────────────────
