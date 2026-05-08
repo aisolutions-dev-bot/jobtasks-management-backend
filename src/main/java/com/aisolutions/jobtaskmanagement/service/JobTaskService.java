@@ -140,7 +140,7 @@ public class JobTaskService {
                     task.setAssigneeStaffId(req.getAssigneeStaffId());
                     task.setPriority(req.getPriority() != null ? req.getPriority() : "Medium");
                     task.setJobStatus("Pending");
-                    task.setDueDate(req.getDueDate());
+                    task.setDueDate(req.getDueDate() != null ? req.getDueDate().atStartOfDay() : null);
                     task.setEstimatedHours(req.getEstimatedHours());
                     task.setEntryStaff(req.getEntryStaff());
                     task.setEntryDate(LocalDateTime.now());
@@ -167,7 +167,7 @@ public class JobTaskService {
                     task.setTaskDescription(req.getTaskDescription());
                     task.setAssigneeStaffId(req.getAssigneeStaffId());
                     task.setPriority(req.getPriority());
-                    task.setDueDate(req.getDueDate());
+                    task.setDueDate(req.getDueDate() != null ? req.getDueDate().atStartOfDay() : null);
                     task.setEstimatedHours(req.getEstimatedHours());
                     task.setActualHours(req.getActualHours());
                     task.setRemarks(req.getRemarks());

@@ -72,7 +72,7 @@ public class JobTaskDTO {
         private String        taskDescription;
         private Integer      assigneeStaffId;
         private String        priority;
-        private LocalDateTime dueDate;
+        private java.time.LocalDate dueDate;
         private BigDecimal    estimatedHours;
         private BigDecimal    actualHours;
         private String        remarks;
