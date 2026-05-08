@@ -55,8 +55,8 @@ public class JobTaskDTO {
         private String        taskTitle;
         private String        taskType;
         private String        taskDescription;
-        private Integer      assignorStaffId;
-        private Integer      assigneeStaffId;
+        private String       assignorStaffId;   // m03Staff.StaffId (varchar)
+        private String       assigneeStaffId;
         private String        priority;
         private java.time.LocalDate dueDate;
         private BigDecimal    estimatedHours;
@@ -70,7 +70,7 @@ public class JobTaskDTO {
         private String        taskTitle;
         private String        taskType;
         private String        taskDescription;
-        private Integer      assigneeStaffId;
+        private String       assigneeStaffId;
         private String        priority;
         private java.time.LocalDate dueDate;
         private BigDecimal    estimatedHours;

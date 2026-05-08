@@ -97,7 +97,7 @@ public class JobTaskService {
                     } else if (viewDept && staff != null && staff.getDepartment() != null) {
                         tasksUni = taskRepo.findByDepartment(staff.getDepartment());
                     } else if (staff != null) {
-                        tasksUni = taskRepo.findByStaffCode(staff.getCode().intValue());
+                        tasksUni = taskRepo.findByStaffId(staff.getStaffId());
                     } else {
                         // No staff resolved — return empty
                         return Uni.createFrom().item(List.of());
@@ -138,9 +138,9 @@ public class JobTaskService {
 
         // Sequential reactive chain — Vert.x MySQL client cannot handle parallel queries
         // on the same connection. flatMap chains them strictly one-after-another.
-        return staffRepo.findById((long) req.getAssignorStaffId())
+        return staffRepo.findByStaffId(req.getAssignorStaffId())
                 .flatMap(assignor ->
-                    staffRepo.findById((long) req.getAssigneeStaffId())
+                    staffRepo.findByStaffId(req.getAssigneeStaffId())
                         .flatMap(assignee ->
                             taskRepo.persist(task)
                                 .map(saved -> {
@@ -222,8 +222,8 @@ public class JobTaskService {
         if (tasks.isEmpty()) return Uni.createFrom().item(List.of());
 
         return staffRepo.findAllOrdered().map(staffList -> {
-            Map<Long, Staff> staffMap = staffList.stream()
-                    .collect(Collectors.toMap(Staff::getCode, Function.identity()));
+            Map<String, Staff> staffMap = staffList.stream()
+                    .collect(Collectors.toMap(Staff::getStaffId, Function.identity()));
             return tasks.stream()
                     .map(t -> toResponse(t,
                             staffMap.get(t.getAssignorStaffId()),
@@ -233,11 +233,10 @@ public class JobTaskService {
     }
 
     private Uni<JobTaskResponse> enrichSingle(JobTask task) {
-        return Uni.combine().all()
-                .unis(staffRepo.findById(task.getAssignorStaffId().longValue()),
-                      staffRepo.findById(task.getAssigneeStaffId().longValue()))
-                .asTuple()
-                .map(t -> toResponse(task, t.getItem1(), t.getItem2()));
+        return staffRepo.findByStaffId(task.getAssignorStaffId())
+                .flatMap(assignor ->
+                    staffRepo.findByStaffId(task.getAssigneeStaffId())
+                        .map(assignee -> toResponse(task, assignor, assignee)));
     }
 
     private JobTaskResponse toResponse(JobTask t, Staff assignor, Staff assignee) {

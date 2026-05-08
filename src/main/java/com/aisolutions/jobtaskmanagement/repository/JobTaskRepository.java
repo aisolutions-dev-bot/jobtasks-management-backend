@@ -35,13 +35,13 @@ public class JobTaskRepository implements PanacheRepositoryBase<JobTask, Long> {
     /**
      * Tasks where the user is assignor OR assignee.
      * Used when both a2401.02=0 AND a2401.01=0.
-     * staffCode = m03Staff.Code (the numeric PK).
+     * staffId = m03Staff.StaffId (varchar, e.g. SUPERDREW).
      */
-    public Uni<List<JobTask>> findByStaffCode(Integer staffCode) {
+    public Uni<List<JobTask>> findByStaffId(String staffId) {
         return list(
             "jobStatus != 'Cancelled' AND (assignorStaffId = ?1 OR assigneeStaffId = ?1) " +
             "ORDER BY dueDate ASC",
-            staffCode);
+            staffId);
     }
 
     public Uni<JobTask> findActiveById(Long id) {

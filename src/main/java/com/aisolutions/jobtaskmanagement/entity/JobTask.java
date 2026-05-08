@@ -41,11 +41,11 @@ public class JobTask extends PanacheEntityBase {
     @Column(name = "TaskDescription", length = 5000)
     private String taskDescription;
 
-    @Column(name = "AssignorStaffID")
-    private Integer assignorStaffId;
+    @Column(name = "AssignorStaffID", length = 25)
+    private String assignorStaffId;
 
-    @Column(name = "AssigneeStaffID")
-    private Integer assigneeStaffId;
+    @Column(name = "AssigneeStaffID", length = 25)
+    private String assigneeStaffId;
 
     @Column(name = "Priority", length = 20)
     private String priority;
