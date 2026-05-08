@@ -136,22 +136,20 @@ public class JobTaskService {
         // Temp code — will be replaced with sequential code after ID is generated
         task.setJobTaskId("JT-TEMP-" + (System.currentTimeMillis() % 99999));
 
-        // Fetch assignor and assignee BEFORE persist to avoid session state conflicts
-        return Uni.combine().all()
-                .unis(staffRepo.findById((long) req.getAssignorStaffId()),
-                      staffRepo.findById((long) req.getAssigneeStaffId()))
-                .asTuple()
-                .flatMap(tuple -> {
-                    Staff assignor = tuple.getItem1();
-                    Staff assignee = tuple.getItem2();
-                    return taskRepo.persist(task)
-                            .map(saved -> {
-                                String finalCode = String.format("JT-%d-%04d",
-                                    Year.now().getValue(), saved.getUniqId());
-                                saved.setJobTaskId(finalCode);
-                                return toResponse(saved, assignor, assignee);
-                            });
-                });
+        // Sequential reactive chain — Vert.x MySQL client cannot handle parallel queries
+        // on the same connection. flatMap chains them strictly one-after-another.
+        return staffRepo.findById((long) req.getAssignorStaffId())
+                .flatMap(assignor ->
+                    staffRepo.findById((long) req.getAssigneeStaffId())
+                        .flatMap(assignee ->
+                            taskRepo.persist(task)
+                                .map(saved -> {
+                                    saved.setJobTaskId(String.format("JT-%d-%04d",
+                                        Year.now().getValue(), saved.getUniqId()));
+                                    return toResponse(saved, assignor, assignee);
+                                })
+                        )
+                );
     }
 
     // ─── Update ───────────────────────────────────────────────────────────────
