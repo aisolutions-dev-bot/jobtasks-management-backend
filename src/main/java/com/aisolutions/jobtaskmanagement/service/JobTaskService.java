@@ -142,7 +142,7 @@ public class JobTaskService {
                     task.setJobStatus("Pending");
                     task.setDueDate(req.getDueDate() != null ? req.getDueDate().atStartOfDay() : null);
                     task.setEstimatedHours(req.getEstimatedHours());
-                    task.setEntryStaff(req.getEntryStaff());
+                    task.setEntryStaff(req.getEntryStaff() != null ? req.getEntryStaff() : "SYSTEM");
                     task.setEntryDate(LocalDateTime.now());
 
                     // JobTaskId is NOT NULL in DB — set a temp value before persist
