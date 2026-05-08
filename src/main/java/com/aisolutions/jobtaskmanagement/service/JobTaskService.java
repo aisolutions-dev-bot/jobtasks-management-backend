@@ -120,46 +120,33 @@ public class JobTaskService {
 
     @WithTransaction
     public Uni<JobTaskResponse> create(CreateJobTaskRequest req) {
-        return Uni.combine().all()
-                .unis(staffRepo.findById(req.getAssignorStaffId().longValue()),
-                      staffRepo.findById(req.getAssigneeStaffId().longValue()))
-                .asTuple()
-                .flatMap(tuple -> {
-                    Staff assignor = tuple.getItem1();
-                    Staff assignee = tuple.getItem2();
-                    if (assignor == null)
-                        return Uni.createFrom().failure(new WebApplicationException("Assignor not found", Response.Status.BAD_REQUEST));
-                    if (assignee == null)
-                        return Uni.createFrom().failure(new WebApplicationException("Assignee not found", Response.Status.BAD_REQUEST));
+        // Build the task entity first
+        JobTask task = new JobTask();
+        task.setTaskTitle(req.getTaskTitle() != null ? req.getTaskTitle().trim() : "");
+        task.setTaskType(req.getTaskType());
+        task.setTaskDescription(req.getTaskDescription());
+        task.setAssignorStaffId(req.getAssignorStaffId());
+        task.setAssigneeStaffId(req.getAssigneeStaffId());
+        task.setPriority(req.getPriority() != null ? req.getPriority() : "Medium");
+        task.setJobStatus("Pending");
+        task.setDueDate(req.getDueDate() != null ? req.getDueDate().atStartOfDay() : null);
+        task.setEstimatedHours(req.getEstimatedHours());
+        task.setEntryStaff(req.getEntryStaff() != null ? req.getEntryStaff() : "SYSTEM");
+        task.setEntryDate(LocalDateTime.now());
+        // Temp code — will be replaced with sequential code after ID is generated
+        task.setJobTaskId("JT-TEMP-" + (System.currentTimeMillis() % 99999));
 
-                    JobTask task = new JobTask();
-                    task.setTaskTitle(req.getTaskTitle().trim());
-                    task.setTaskType(req.getTaskType());
-                    task.setTaskDescription(req.getTaskDescription());
-                    task.setAssignorStaffId(req.getAssignorStaffId());
-                    task.setAssigneeStaffId(req.getAssigneeStaffId());
-                    task.setPriority(req.getPriority() != null ? req.getPriority() : "Medium");
-                    task.setJobStatus("Pending");
-                    task.setDueDate(req.getDueDate() != null ? req.getDueDate().atStartOfDay() : null);
-                    task.setEstimatedHours(req.getEstimatedHours());
-                    task.setEntryStaff(req.getEntryStaff() != null ? req.getEntryStaff() : "SYSTEM");
-                    task.setEntryDate(LocalDateTime.now());
-
-                    // JobTaskId is NOT NULL in DB — set a temp value before persist
-                    task.setJobTaskId(String.format("JT-%d-%d", Year.now().getValue(),
-                        System.currentTimeMillis() % 100000));
-
-                    return taskRepo.persist(task)
-                            .flatMap(saved ->
-                                // Now that UniqID is generated, update to final sequential code
-                                taskRepo.update("jobTaskId = ?1 WHERE uniqId = ?2",
-                                    String.format("JT-%d-%04d", Year.now().getValue(), saved.getUniqId()),
-                                    saved.getUniqId())
-                                .map(updated -> {
-                                    saved.setJobTaskId(
-                                        String.format("JT-%d-%04d", Year.now().getValue(), saved.getUniqId()));
-                                    return toResponse(saved, assignor, assignee);
-                                }));
+        return taskRepo.persist(task)
+                .flatMap(saved -> {
+                    // Update to final sequential code now that UniqID is known
+                    String finalCode = String.format("JT-%d-%04d", Year.now().getValue(), saved.getUniqId());
+                    saved.setJobTaskId(finalCode);
+                    // Fetch assignor and assignee for response enrichment
+                    return Uni.combine().all()
+                            .unis(staffRepo.findById(saved.getAssignorStaffId().longValue()),
+                                  staffRepo.findById(saved.getAssigneeStaffId().longValue()))
+                            .asTuple()
+                            .map(tuple -> toResponse(saved, tuple.getItem1(), tuple.getItem2()));
                 });
     }
 

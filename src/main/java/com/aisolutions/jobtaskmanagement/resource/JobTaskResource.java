@@ -70,8 +70,11 @@ public class JobTaskResource {
     public Uni<Response> create(CreateJobTaskRequest req) {
         return service.create(req)
                 .onItem().transform(r -> Response.status(Response.Status.CREATED).entity(r).build())
-                .onFailure().recoverWithItem(e ->
-                        Response.serverError().entity(Map.of("error", e.getMessage())).build());
+                .onFailure().recoverWithItem(e -> {
+                        String msg = e.getMessage() != null ? e.getMessage()
+                            : (e.getCause() != null ? e.getCause().getMessage() : e.getClass().getSimpleName());
+                        return Response.serverError().entity(Map.of("error", msg)).build();
+                });
     }
 
     /**
@@ -82,8 +85,11 @@ public class JobTaskResource {
     public Uni<Response> update(@PathParam("id") Long id, UpdateJobTaskRequest req) {
         return service.update(id, req)
                 .onItem().transform(r -> Response.ok(r).build())
-                .onFailure().recoverWithItem(e ->
-                        Response.serverError().entity(Map.of("error", e.getMessage())).build());
+                .onFailure().recoverWithItem(e -> {
+                        String msg = e.getMessage() != null ? e.getMessage()
+                            : (e.getCause() != null ? e.getCause().getMessage() : e.getClass().getSimpleName());
+                        return Response.serverError().entity(Map.of("error", msg)).build();
+                });
     }
 
     /**
@@ -94,8 +100,11 @@ public class JobTaskResource {
     public Uni<Response> updateStatus(@PathParam("id") Long id, UpdateStatusRequest req) {
         return service.updateStatus(id, req)
                 .onItem().transform(r -> Response.ok(r).build())
-                .onFailure().recoverWithItem(e ->
-                        Response.serverError().entity(Map.of("error", e.getMessage())).build());
+                .onFailure().recoverWithItem(e -> {
+                        String msg = e.getMessage() != null ? e.getMessage()
+                            : (e.getCause() != null ? e.getCause().getMessage() : e.getClass().getSimpleName());
+                        return Response.serverError().entity(Map.of("error", msg)).build();
+                });
     }
 
     /**
@@ -107,7 +116,10 @@ public class JobTaskResource {
     public Uni<Response> delete(@PathParam("id") Long id) {
         return service.delete(id)
                 .onItem().transform(v -> Response.noContent().build())
-                .onFailure().recoverWithItem(e ->
-                        Response.serverError().entity(Map.of("error", e.getMessage())).build());
+                .onFailure().recoverWithItem(e -> {
+                        String msg = e.getMessage() != null ? e.getMessage()
+                            : (e.getCause() != null ? e.getCause().getMessage() : e.getClass().getSimpleName());
+                        return Response.serverError().entity(Map.of("error", msg)).build();
+                });
     }
 }
