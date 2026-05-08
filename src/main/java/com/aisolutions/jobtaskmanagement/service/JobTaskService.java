@@ -145,13 +145,21 @@ public class JobTaskService {
                     task.setEntryStaff(req.getEntryStaff());
                     task.setEntryDate(LocalDateTime.now());
 
+                    // JobTaskId is NOT NULL in DB — set a temp value before persist
+                    task.setJobTaskId(String.format("JT-%d-%d", Year.now().getValue(),
+                        System.currentTimeMillis() % 100000));
+
                     return taskRepo.persist(task)
-                            .flatMap(saved -> {
-                                // Generate task code now that ID is known
-                                saved.setJobTaskId(
-                                    String.format("JT-%d-%04d", Year.now().getValue(), saved.getUniqId()));
-                                return Uni.createFrom().item(toResponse(saved, assignor, assignee));
-                            });
+                            .flatMap(saved ->
+                                // Now that UniqID is generated, update to final sequential code
+                                taskRepo.update("jobTaskId = ?1 WHERE uniqId = ?2",
+                                    String.format("JT-%d-%04d", Year.now().getValue(), saved.getUniqId()),
+                                    saved.getUniqId())
+                                .map(updated -> {
+                                    saved.setJobTaskId(
+                                        String.format("JT-%d-%04d", Year.now().getValue(), saved.getUniqId()));
+                                    return toResponse(saved, assignor, assignee);
+                                }));
                 });
     }
 
