@@ -136,17 +136,21 @@ public class JobTaskService {
         // Temp code — will be replaced with sequential code after ID is generated
         task.setJobTaskId("JT-TEMP-" + (System.currentTimeMillis() % 99999));
 
-        return taskRepo.persist(task)
-                .flatMap(saved -> {
-                    // Update to final sequential code now that UniqID is known
-                    String finalCode = String.format("JT-%d-%04d", Year.now().getValue(), saved.getUniqId());
-                    saved.setJobTaskId(finalCode);
-                    // Fetch assignor and assignee for response enrichment
-                    return Uni.combine().all()
-                            .unis(staffRepo.findById(saved.getAssignorStaffId().longValue()),
-                                  staffRepo.findById(saved.getAssigneeStaffId().longValue()))
-                            .asTuple()
-                            .map(tuple -> toResponse(saved, tuple.getItem1(), tuple.getItem2()));
+        // Fetch assignor and assignee BEFORE persist to avoid session state conflicts
+        return Uni.combine().all()
+                .unis(staffRepo.findById((long) req.getAssignorStaffId()),
+                      staffRepo.findById((long) req.getAssigneeStaffId()))
+                .asTuple()
+                .flatMap(tuple -> {
+                    Staff assignor = tuple.getItem1();
+                    Staff assignee = tuple.getItem2();
+                    return taskRepo.persist(task)
+                            .map(saved -> {
+                                String finalCode = String.format("JT-%d-%04d",
+                                    Year.now().getValue(), saved.getUniqId());
+                                saved.setJobTaskId(finalCode);
+                                return toResponse(saved, assignor, assignee);
+                            });
                 });
     }
 
