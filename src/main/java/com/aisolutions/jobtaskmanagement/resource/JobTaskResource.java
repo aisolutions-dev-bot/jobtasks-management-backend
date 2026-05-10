@@ -109,7 +109,7 @@ public class JobTaskResource {
 
     /**
      * DELETE /api/v1/job-tasks/{id}
-     * Soft delete — sets JobStatus = 'Cancelled'
+     * Soft delete — sets JobStatus = 'Void'
      */
     @DELETE
     @Path("/{id}")

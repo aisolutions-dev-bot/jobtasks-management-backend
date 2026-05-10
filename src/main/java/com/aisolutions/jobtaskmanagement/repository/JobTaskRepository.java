@@ -9,14 +9,16 @@ import java.util.List;
 
 /**
  * Reactive Panache repository for m24JobTasks.
- * Soft delete = JobStatus='Cancelled' (no IsActive column in this table).
+ * Soft delete = JobStatus='Void' (no IsActive column in this table).
+ * Note: 'Cancelled' is a user-settable status meaning the task was cancelled
+ * by the user; 'Void' means the record was deleted by the assignor.
  */
 @ApplicationScoped
 public class JobTaskRepository implements PanacheRepositoryBase<JobTask, Long> {
 
-    /** All non-cancelled tasks — for users with full access (a2401.02=1) */
+    /** All non-voided tasks — for users with full access (a2401.02=1) */
     public Uni<List<JobTask>> findAllActive() {
-        return list("jobStatus != 'Cancelled' ORDER BY dueDate ASC");
+        return list("jobStatus != 'Void' ORDER BY dueDate ASC");
     }
 
     /**
@@ -25,7 +27,7 @@ public class JobTaskRepository implements PanacheRepositoryBase<JobTask, Long> {
      */
     public Uni<List<JobTask>> findByDepartment(String department) {
         return list(
-            "jobStatus != 'Cancelled' AND " +
+            "jobStatus != 'Void' AND " +
             "(EXISTS (SELECT 1 FROM Staff s WHERE s.staffId = assignorStaffId AND s.department = ?1) OR " +
             " EXISTS (SELECT 1 FROM Staff s WHERE s.staffId = assigneeStaffId AND s.department = ?1)) " +
             "ORDER BY dueDate ASC",
@@ -39,12 +41,12 @@ public class JobTaskRepository implements PanacheRepositoryBase<JobTask, Long> {
      */
     public Uni<List<JobTask>> findByStaffId(String staffId) {
         return list(
-            "jobStatus != 'Cancelled' AND (assignorStaffId = ?1 OR assigneeStaffId = ?1) " +
+            "jobStatus != 'Void' AND (assignorStaffId = ?1 OR assigneeStaffId = ?1) " +
             "ORDER BY dueDate ASC",
             staffId);
     }
 
     public Uni<JobTask> findActiveById(Long id) {
-        return find("uniqId = ?1 AND jobStatus != 'Cancelled'", id).firstResult();
+        return find("uniqId = ?1 AND jobStatus != 'Void'", id).firstResult();
     }
 }

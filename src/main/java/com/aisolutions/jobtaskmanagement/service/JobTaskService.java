@@ -204,7 +204,7 @@ public class JobTaskService {
         return taskRepo.findActiveById(id)
                 .onItem().ifNull().failWith(() -> new NotFoundException("Task " + id + " not found"))
                 .flatMap(task -> {
-                    task.setJobStatus("Cancelled");
+                    task.setJobStatus("Void");
                     task.setLastEdtiDate(LocalDateTime.now());
                     return Uni.createFrom().voidItem();
                 });
