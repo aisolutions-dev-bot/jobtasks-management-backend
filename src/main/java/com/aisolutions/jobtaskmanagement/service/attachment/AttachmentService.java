@@ -26,7 +26,7 @@ public class AttachmentService {
 
     private static final List<String> ALLOWED_EXTENSIONS = List.of(
         ".pdf", ".doc", ".docx", ".xls", ".xlsx",
-        ".jpg", ".jpeg", ".png", ".gif", ".txt"
+        ".jpg", ".jpeg", ".png", ".gif", ".txt", ".md"
     );
     private static final long MAX_FILE_SIZE = 20L * 1024 * 1024; // 20 MB
 
