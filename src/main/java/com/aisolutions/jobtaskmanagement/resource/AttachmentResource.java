@@ -90,12 +90,18 @@ public class AttachmentResource {
                 .entity(Map.of("error", "jobTaskId is required")).build());
         }
 
+        if (file.uploadedFile() == null) {
+            return Uni.createFrom().item(Response.status(400)
+                .entity(Map.of("error", "Uploaded file path is null — multipart not parsed correctly")).build());
+        }
+
         byte[] fileData;
         try {
             fileData = Files.readAllBytes(file.uploadedFile());
-        } catch (IOException e) {
+        } catch (Exception e) {
+            System.err.println("[AttachmentResource] file read error: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             return Uni.createFrom().item(Response.serverError()
-                .entity(Map.of("error", "Failed to read uploaded file")).build());
+                .entity(Map.of("error", "Failed to read uploaded file: " + e.getMessage())).build());
         }
 
         return attachmentService.uploadFile(

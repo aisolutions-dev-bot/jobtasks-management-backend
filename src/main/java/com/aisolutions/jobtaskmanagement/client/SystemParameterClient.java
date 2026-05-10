@@ -1,7 +1,7 @@
 package com.aisolutions.jobtaskmanagement.client;
 
 import com.aisolutions.jobtaskmanagement.dto.SystemParameterDTO;
-import com.aisolutions.jobtaskmanagement.service.auth.AuthHeaderFactory;
+import com.aisolutions.jobtaskmanagement.service.auth.ServiceAuthHeaderFactory;
 
 import io.smallrye.mutiny.Uni;
 import org.eclipse.microprofile.rest.client.annotation.RegisterClientHeaders;
@@ -23,7 +23,7 @@ import java.util.List;
  */
 @Path("/api/system-parameters")
 @RegisterRestClient(configKey = "organization-api")
-@RegisterClientHeaders(AuthHeaderFactory.class)
+@RegisterClientHeaders(ServiceAuthHeaderFactory.class)
 public interface SystemParameterClient {
 
     @GET
