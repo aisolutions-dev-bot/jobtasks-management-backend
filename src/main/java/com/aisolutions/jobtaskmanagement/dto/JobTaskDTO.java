@@ -85,5 +85,9 @@ public class JobTaskDTO {
     public static class UpdateStatusRequest {
         private String jobStatus;
         private String lastEditStaff;
+        /** User-supplied started date (optional, set when moving to In Progress) */
+        private java.time.LocalDate startedDate;
+        /** User-supplied completed date (optional, set when moving to Completed) */
+        private java.time.LocalDate completedDate;
     }
 }

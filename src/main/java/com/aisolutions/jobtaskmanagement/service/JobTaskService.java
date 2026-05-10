@@ -181,15 +181,39 @@ public class JobTaskService {
                 .onItem().ifNull().failWith(() -> new NotFoundException("Task " + id + " not found"))
                 .flatMap(task -> {
                     String newStatus = req.getJobStatus();
-                    if ("In Progress".equals(newStatus) && task.getStartedDate() == null) {
-                        task.setStartedDate(LocalDateTime.now());
+
+                    switch (newStatus) {
+                        case "In Progress" -> {
+                            // Use user-supplied startedDate if provided, otherwise now
+                            if (req.getStartedDate() != null) {
+                                task.setStartedDate(req.getStartedDate().atStartOfDay());
+                            } else if (task.getStartedDate() == null) {
+                                task.setStartedDate(LocalDateTime.now());
+                            }
+                        }
+                        case "Completed" -> {
+                            // Use user-supplied dates if provided, otherwise now
+                            if (req.getStartedDate() != null && task.getStartedDate() == null) {
+                                task.setStartedDate(req.getStartedDate().atStartOfDay());
+                            } else if (task.getStartedDate() == null) {
+                                task.setStartedDate(LocalDateTime.now());
+                            }
+                            if (req.getCompletedDate() != null) {
+                                task.setCompletedDate(req.getCompletedDate().atStartOfDay());
+                            } else {
+                                task.setCompletedDate(LocalDateTime.now());
+                            }
+                        }
+                        case "Pending", "On Hold" -> {
+                            // Reset completion; keep startedDate intact
+                            task.setCompletedDate(null);
+                        }
+                        case "Closed" -> {
+                            // Closing a completed task — keep both dates as-is
+                            // (completedDate was already set when it moved to Completed)
+                        }
                     }
-                    if ("Completed".equals(newStatus)) {
-                        task.setCompletedDate(LocalDateTime.now());
-                    }
-                    if ("Pending".equals(newStatus) || "On Hold".equals(newStatus)) {
-                        task.setCompletedDate(null);
-                    }
+
                     task.setJobStatus(newStatus);
                     task.setLastEditStaff(req.getLastEditStaff());
                     task.setLastEdtiDate(LocalDateTime.now());
