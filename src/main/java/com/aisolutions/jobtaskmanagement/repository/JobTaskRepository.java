@@ -26,8 +26,8 @@ public class JobTaskRepository implements PanacheRepositoryBase<JobTask, Long> {
     public Uni<List<JobTask>> findByDepartment(String department) {
         return list(
             "jobStatus != 'Cancelled' AND " +
-            "(EXISTS (SELECT 1 FROM Staff s WHERE s.code = assignorStaffId AND s.department = ?1) OR " +
-            " EXISTS (SELECT 1 FROM Staff s WHERE s.code = assigneeStaffId AND s.department = ?1)) " +
+            "(EXISTS (SELECT 1 FROM Staff s WHERE s.staffId = assignorStaffId AND s.department = ?1) OR " +
+            " EXISTS (SELECT 1 FROM Staff s WHERE s.staffId = assigneeStaffId AND s.department = ?1)) " +
             "ORDER BY dueDate ASC",
             department);
     }

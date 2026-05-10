@@ -14,8 +14,6 @@ import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.NotFoundException;
-import jakarta.ws.rs.WebApplicationException;
-import jakarta.ws.rs.core.Response;
 import org.eclipse.microprofile.rest.client.inject.RestClient;
 import org.jboss.logging.Logger;
 
@@ -141,10 +139,13 @@ public class JobTaskService {
                     staffRepo.findByStaffId(req.getAssigneeStaffId())
                         .flatMap(assignee ->
                             taskRepo.persist(task)
-                                .map(saved -> {
+                                .flatMap(saved -> {
+                                    // Update JobTaskId now that we have the auto-generated UniqID.
+                                    // Use flatMap + persist to ensure the update is flushed to DB.
                                     saved.setJobTaskId(String.format("JT-%d-%04d",
                                         Year.now().getValue(), saved.getUniqId()));
-                                    return toResponse(saved, assignor, assignee);
+                                    return taskRepo.persist(saved)
+                                        .map(updated -> toResponse(updated, assignor, assignee));
                                 })
                         )
                 );
