@@ -2,6 +2,7 @@ package com.aisolutions.jobtaskmanagement.resource;
 
 import com.aisolutions.jobtaskmanagement.service.attachment.AttachmentService;
 
+import io.smallrye.common.annotation.Blocking;
 import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
@@ -72,6 +73,7 @@ public class AttachmentResource {
 
     @POST
     @Path("/upload")
+    @Blocking   // required: Files.readAllBytes + FTP are blocking; ensures multipart body is fully parsed
     @Consumes(MediaType.MULTIPART_FORM_DATA)
     public Uni<Response> uploadFile(
             @RestForm("file")        FileUpload file,
