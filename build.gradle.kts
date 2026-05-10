@@ -38,6 +38,9 @@ dependencies {
 
     // Shared library
     implementation("com.aisolutions:ai-solutions-java-shared:0.0.3")
+
+    // FTP client
+    implementation("commons-net:commons-net:3.10.0")
 }
 
 group = "com.aisolutions"
