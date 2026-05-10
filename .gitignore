@@ -12,3 +12,4 @@ target/
 
 # Local environment
 .env
+.env
