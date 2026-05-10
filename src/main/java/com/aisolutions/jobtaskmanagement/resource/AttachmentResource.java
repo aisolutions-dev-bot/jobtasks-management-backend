@@ -1,6 +1,5 @@
 package com.aisolutions.jobtaskmanagement.resource;
 
-import com.aisolutions.jobtaskmanagement.dto.AttachmentDTO;
 import com.aisolutions.jobtaskmanagement.service.attachment.AttachmentService;
 
 import io.smallrye.mutiny.Uni;
@@ -19,18 +18,13 @@ import java.util.Map;
 /**
  * REST resource for JobTasks attachment management.
  *
- * GET    /api/v1/attachments?jobTaskId=JT-2026-0001  — list metadata
- * GET    /api/v1/attachments/download/{id}           — download file bytes
- * POST   /api/v1/attachments/upload  (multipart)     — upload single file
- * DELETE /api/v1/attachments/{id}                    — delete
+ * GET    /api/v1/attachments?jobTaskId=JT-2026-0001        — list metadata
+ * GET    /api/v1/attachments/download/{id}                 — download file bytes
+ * POST   /api/v1/attachments/upload  (multipart)           — upload single file
+ * DELETE /api/v1/attachments/{id}                          — delete
  *
- * IMPORTANT — why the upload method returns plain Response (not Uni<Response>):
- *   In Quarkus RESTEasy Reactive, multipart parsing only works correctly when the
- *   handler method is synchronous (blocking). If the method returns Uni<Response>,
- *   Quarkus tries to parse the multipart body on the event loop, which fails with
- *   HTTP 400 before the method body is ever reached.
- *   A plain return type tells Quarkus to dispatch the method to a worker thread
- *   automatically — no @Blocking annotation needed.
+ * quarkus.http.body.handle-files-as-blocking=true in application.properties
+ * is required for multipart file handling to work in RESTEasy Reactive.
  */
 @Path("/api/v1/attachments")
 @Produces(MediaType.APPLICATION_JSON)
@@ -78,51 +72,42 @@ public class AttachmentResource {
     }
 
     // ─── POST upload ──────────────────────────────────────────────────────────
-    //
-    // Returns plain Response (synchronous/blocking) — NOT Uni<Response>.
-    // This is the correct pattern for RESTEasy Reactive multipart endpoints.
-    // Quarkus will automatically run this on a worker thread.
 
     @POST
     @Path("/upload")
     @Consumes(MediaType.MULTIPART_FORM_DATA)
-    public Response uploadFile(
-            @RestForm("file")       FileUpload file,
-            @RestForm("jobTaskId")  String jobTaskId,
-            @RestForm("entryStaff") String entryStaff) {
+    public Uni<Response> uploadFile(
+            @RestForm("file")        FileUpload file,
+            @RestForm("jobTaskId")   String jobTaskId,
+            @RestForm("entryStaff")  String entryStaff) {
 
         if (file == null) {
-            return Response.status(400).entity(Map.of("error", "No file provided")).build();
+            return Uni.createFrom().item(Response.status(400)
+                .entity(Map.of("error", "No file provided")).build());
         }
         if (jobTaskId == null || jobTaskId.isBlank()) {
-            return Response.status(400).entity(Map.of("error", "jobTaskId is required")).build();
+            return Uni.createFrom().item(Response.status(400)
+                .entity(Map.of("error", "jobTaskId is required")).build());
         }
 
         byte[] fileData;
         try {
             fileData = Files.readAllBytes(file.uploadedFile());
         } catch (IOException e) {
-            System.err.println("[AttachmentResource] failed to read file: " + e.getMessage());
-            return Response.serverError()
-                .entity(Map.of("error", "Failed to read uploaded file")).build();
+            return Uni.createFrom().item(Response.serverError()
+                .entity(Map.of("error", "Failed to read uploaded file")).build());
         }
 
-        try {
-            AttachmentDTO dto = attachmentService.uploadFile(
-                    jobTaskId,
-                    file.fileName(),
-                    file.contentType(),
-                    fileData,
-                    entryStaff != null ? entryStaff : "SYSTEM")
-                .await().indefinitely(); // block worker thread until FTP + DB complete
-            return Response.status(201).entity(dto).build();
-        } catch (IllegalArgumentException e) {
-            return Response.status(400).entity(Map.of("error", e.getMessage())).build();
-        } catch (Exception e) {
-            System.err.println("[AttachmentResource] upload error: " + e.getMessage());
-            return Response.serverError()
-                .entity(Map.of("error", "Upload failed: " + e.getMessage())).build();
-        }
+        return attachmentService.uploadFile(
+                jobTaskId, file.fileName(), file.contentType(), fileData,
+                entryStaff != null ? entryStaff : "SYSTEM")
+            .onItem().transform(dto -> Response.status(201).entity(dto).build())
+            .onFailure(IllegalArgumentException.class).recoverWithItem(e ->
+                Response.status(400).entity(Map.of("error", e.getMessage())).build())
+            .onFailure().recoverWithItem(e -> {
+                System.err.println("[AttachmentResource] upload error: " + e.getMessage());
+                return Response.serverError().entity(Map.of("error", "Upload failed")).build();
+            });
     }
 
     // ─── DELETE ───────────────────────────────────────────────────────────────
