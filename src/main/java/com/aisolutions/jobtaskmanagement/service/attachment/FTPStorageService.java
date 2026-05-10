@@ -18,14 +18,11 @@ import java.util.UUID;
 /**
  * FTP storage service for JobTasks attachments.
  *
- * Path structure (all resolved from m07SystemParameters):
- *   {ATTACHMENT-MAIN-URL}/{ATTACHMENT-PATH-JOBTASKS}/{jobTaskId}/{uuid-filename.ext}
+ * Path structure (all from application.properties / env vars):
+ *   {ftp.base-path}/{ftp.jobtasks-folder}/{jobTaskId}/{uuid-filename.ext}
  *
  * Example:
  *   /test.borneochemicalintl.com/pms-attachments/JOBTASKS/JT-2026-0001/a1b2c3d4-invoice.pdf
- *
- * The base path is NOT hardcoded — it is passed in by the caller (AttachmentService)
- * after it has been resolved from the org-api system-parameters endpoint.
  */
 @ApplicationScoped
 public class FTPStorageService {
@@ -42,42 +39,54 @@ public class FTPStorageService {
     @ConfigProperty(name = "ftp.password")
     String password;
 
+    @ConfigProperty(name = "ftp.base-path", defaultValue = "/test.borneochemicalintl.com/pms-attachments")
+    String basePath;
+
+    @ConfigProperty(name = "ftp.jobtasks-folder", defaultValue = "JOBTASKS")
+    String jobtasksFolder;
+
     private static final int CONNECT_TIMEOUT_MS = 30_000;
     private static final Duration DATA_TIMEOUT   = Duration.ofSeconds(60);
 
-    // #region PUBLIC METHODS
+    // ── Public API ────────────────────────────────────────────────────────────
 
     /**
-     * Upload a file to FTP.
+     * Build the full remote directory for a given jobTaskId.
+     * e.g. /test.borneochemicalintl.com/pms-attachments/JOBTASKS/JT-2026-0001
+     */
+    public String buildDirectory(String jobTaskId) {
+        return basePath + "/" + jobtasksFolder + "/" + jobTaskId;
+    }
+
+    /**
+     * Upload a file. Returns the full remote path of the stored file.
      *
      * @param fileData      raw bytes
-     * @param directoryPath full remote directory, e.g. /pms-attachments/JOBTASKS/JT-2026-0001
-     * @param originalName  original filename for generating a unique stored name
-     * @return full remote path to the stored file
+     * @param directoryPath full FTP directory path (already built by caller)
+     * @param originalName  original filename, used to generate a unique stored name
      */
     public Uni<String> uploadFile(byte[] fileData, String directoryPath, String originalName) {
         return Uni.createFrom().item(() -> {
-            FTPClient ftpClient = new FTPClient();
+            FTPClient ftp = new FTPClient();
             try {
-                connect(ftpClient);
-                createDirectories(ftpClient, directoryPath);
-
-                String uniqueFileName = generateUniqueFileName(originalName);
-                String remotePath     = directoryPath + "/" + uniqueFileName;
+                connect(ftp);
+                String dir        = directoryPath;
+                createDirectories(ftp, dir);
+                String uniqueName = generateUniqueName(originalName);
+                String remotePath = dir + "/" + uniqueName;
 
                 try (InputStream is = new ByteArrayInputStream(fileData)) {
-                    boolean ok = ftpClient.storeFile(remotePath, is);
-                    if (!ok) {
-                        throw new RuntimeException("FTP storeFile failed: " + ftpClient.getReplyString());
+                    if (!ftp.storeFile(remotePath, is)) {
+                        throw new RuntimeException("FTP storeFile failed: " + ftp.getReplyString());
                     }
                 }
                 System.out.println("[FTP] Uploaded: " + remotePath);
                 return remotePath;
             } catch (Exception e) {
                 System.err.println("[FTP] Upload error: " + e.getMessage());
-                throw new RuntimeException("Failed to upload to FTP: " + e.getMessage(), e);
+                throw new RuntimeException("FTP upload failed: " + e.getMessage(), e);
             } finally {
-                disconnect(ftpClient);
+                disconnect(ftp);
             }
         });
     }
@@ -87,66 +96,62 @@ public class FTPStorageService {
      */
     public Uni<byte[]> downloadFile(String remotePath) {
         return Uni.createFrom().item(() -> {
-            FTPClient ftpClient = new FTPClient();
+            FTPClient ftp = new FTPClient();
             try {
-                connect(ftpClient);
+                connect(ftp);
                 try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-                    boolean ok = ftpClient.retrieveFile(remotePath, out);
-                    if (!ok) {
-                        throw new RuntimeException("FTP retrieveFile failed: " + ftpClient.getReplyString());
+                    if (!ftp.retrieveFile(remotePath, out)) {
+                        throw new RuntimeException("FTP retrieveFile failed: " + ftp.getReplyString());
                     }
                     return out.toByteArray();
                 }
             } catch (Exception e) {
                 System.err.println("[FTP] Download error: " + e.getMessage());
-                throw new RuntimeException("Failed to download from FTP: " + e.getMessage(), e);
+                throw new RuntimeException("FTP download failed: " + e.getMessage(), e);
             } finally {
-                disconnect(ftpClient);
+                disconnect(ftp);
             }
         });
     }
 
     /**
-     * Delete a file from FTP (best-effort — non-existent file is not an error).
+     * Delete a file from FTP. Non-existent file is treated as success.
      */
     public Uni<Boolean> deleteFile(String remotePath) {
         return Uni.createFrom().item(() -> {
-            FTPClient ftpClient = new FTPClient();
+            FTPClient ftp = new FTPClient();
             try {
-                connect(ftpClient);
-                boolean deleted = ftpClient.deleteFile(remotePath);
+                connect(ftp);
+                boolean deleted = ftp.deleteFile(remotePath);
                 System.out.println("[FTP] Delete " + (deleted ? "ok" : "not found") + ": " + remotePath);
                 return true;
             } catch (Exception e) {
                 System.err.println("[FTP] Delete error: " + e.getMessage());
-                throw new RuntimeException("Failed to delete from FTP: " + e.getMessage(), e);
+                throw new RuntimeException("FTP delete failed: " + e.getMessage(), e);
             } finally {
-                disconnect(ftpClient);
+                disconnect(ftp);
             }
         });
     }
 
-    // #endregion
-
-    // #region PRIVATE HELPERS
+    // ── Private helpers ───────────────────────────────────────────────────────
 
     private void connect(FTPClient ftp) throws IOException {
         ftp.setConnectTimeout(CONNECT_TIMEOUT_MS);
         ftp.setDataTimeout(DATA_TIMEOUT);
         ftp.setDefaultTimeout(CONNECT_TIMEOUT_MS);
         ftp.connect(host, port);
-
         if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
             ftp.disconnect();
-            throw new RuntimeException("FTP server refused connection. Code: " + ftp.getReplyCode());
+            throw new RuntimeException("FTP refused connection. Reply: " + ftp.getReplyCode());
         }
         if (!ftp.login(username, password)) {
             ftp.disconnect();
-            throw new RuntimeException("FTP login failed — check credentials.");
+            throw new RuntimeException("FTP login failed for user: " + username);
         }
         ftp.setFileType(FTP.BINARY_FILE_TYPE);
         ftp.enterLocalPassiveMode();
-        System.out.println("[FTP] Connected to " + host);
+        System.out.println("[FTP] Connected to " + host + " as " + username);
     }
 
     private void disconnect(FTPClient ftp) {
@@ -155,27 +160,24 @@ public class FTPStorageService {
         } catch (IOException ignored) {}
     }
 
-    private void createDirectories(FTPClient ftp, String directoryPath) throws IOException {
+    private void createDirectories(FTPClient ftp, String path) throws IOException {
         StringBuilder current = new StringBuilder();
-        for (String segment : directoryPath.split("/")) {
+        for (String segment : path.split("/")) {
             if (segment.isEmpty()) continue;
             current.append("/").append(segment);
-            String path = current.toString();
-            if (!ftp.changeWorkingDirectory(path)) {
-                ftp.makeDirectory(path);
-                ftp.changeWorkingDirectory(path);
+            if (!ftp.changeWorkingDirectory(current.toString())) {
+                ftp.makeDirectory(current.toString());
+                ftp.changeWorkingDirectory(current.toString());
             }
         }
         ftp.changeWorkingDirectory("/");
     }
 
-    private String generateUniqueFileName(String originalName) {
+    private String generateUniqueName(String originalName) {
         String uuid = UUID.randomUUID().toString().substring(0, 8);
         int dot = originalName.lastIndexOf('.');
         if (dot > 0) {
-            String name = sanitize(originalName.substring(0, dot));
-            String ext  = originalName.substring(dot);
-            return uuid + "-" + name + ext;
+            return uuid + "-" + sanitize(originalName.substring(0, dot)) + originalName.substring(dot);
         }
         return uuid + "-" + sanitize(originalName);
     }
@@ -183,6 +185,4 @@ public class FTPStorageService {
     private String sanitize(String s) {
         return s.replaceAll("[^a-zA-Z0-9._-]", "_");
     }
-
-    // #endregion
 }
