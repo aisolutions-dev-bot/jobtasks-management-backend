@@ -6,7 +6,9 @@ import org.apache.commons.net.ftp.FTPReply;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import io.smallrye.mutiny.Uni;
+import io.vertx.mutiny.core.Vertx;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -48,6 +50,9 @@ public class FTPStorageService {
     private static final int CONNECT_TIMEOUT_MS = 30_000;
     private static final Duration DATA_TIMEOUT   = Duration.ofSeconds(60);
 
+    @Inject
+    Vertx vertx;
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     /**
@@ -66,14 +71,13 @@ public class FTPStorageService {
      * @param originalName  original filename, used to generate a unique stored name
      */
     public Uni<String> uploadFile(byte[] fileData, String directoryPath, String originalName) {
-        return Uni.createFrom().item(() -> {
+        return vertx.executeBlocking(Uni.createFrom().item(() -> {
             FTPClient ftp = new FTPClient();
             try {
                 connect(ftp);
-                String dir        = directoryPath;
-                createDirectories(ftp, dir);
+                createDirectories(ftp, directoryPath);
                 String uniqueName = generateUniqueName(originalName);
-                String remotePath = dir + "/" + uniqueName;
+                String remotePath = directoryPath + "/" + uniqueName;
 
                 try (InputStream is = new ByteArrayInputStream(fileData)) {
                     if (!ftp.storeFile(remotePath, is)) {
@@ -88,14 +92,14 @@ public class FTPStorageService {
             } finally {
                 disconnect(ftp);
             }
-        });
+        }));
     }
 
     /**
      * Download file bytes from FTP.
      */
     public Uni<byte[]> downloadFile(String remotePath) {
-        return Uni.createFrom().item(() -> {
+        return vertx.executeBlocking(Uni.createFrom().item(() -> {
             FTPClient ftp = new FTPClient();
             try {
                 connect(ftp);
@@ -111,14 +115,14 @@ public class FTPStorageService {
             } finally {
                 disconnect(ftp);
             }
-        });
+        }));
     }
 
     /**
      * Delete a file from FTP. Non-existent file is treated as success.
      */
     public Uni<Boolean> deleteFile(String remotePath) {
-        return Uni.createFrom().item(() -> {
+        return vertx.executeBlocking(Uni.createFrom().item(() -> {
             FTPClient ftp = new FTPClient();
             try {
                 connect(ftp);
@@ -131,7 +135,7 @@ public class FTPStorageService {
             } finally {
                 disconnect(ftp);
             }
-        });
+        }));
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

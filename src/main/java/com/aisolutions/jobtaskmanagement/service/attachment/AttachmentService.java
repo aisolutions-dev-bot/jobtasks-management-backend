@@ -72,19 +72,23 @@ public class AttachmentService {
 
         System.out.println("[AttachmentService] Uploading to: " + directoryPath);
 
-        // Upload to FTP then persist metadata in a transaction
-        return Panache.withTransaction(() ->
-            attachmentRepository.createAttachment(
-                directoryPath,
-                "JOBTASKS",
-                jobTaskId,
-                originalName,
-                contentType,
-                (long) fileData.length,
-                fileData,
-                entryStaff
-            )
-        ).map(this::toDTO);
+        // Step 1: Upload to FTP (runs on worker thread via vertx.executeBlocking)
+        // Step 2: Persist metadata in a DB transaction (only after FTP succeeds)
+        // Keeping FTP outside the DB transaction avoids holding a connection open
+        // while waiting for network I/O.
+        return ftpStorageService.uploadFile(fileData, directoryPath, originalName)
+            .flatMap(remotePath -> Panache.withTransaction(() ->
+                attachmentRepository.persistAttachmentMeta(
+                    remotePath,
+                    "JOBTASKS",
+                    jobTaskId,
+                    originalName,
+                    contentType,
+                    (long) fileData.length,
+                    entryStaff
+                )
+            ))
+            .map(this::toDTO);
     }
 
     // ── DELETE ────────────────────────────────────────────────────────────────

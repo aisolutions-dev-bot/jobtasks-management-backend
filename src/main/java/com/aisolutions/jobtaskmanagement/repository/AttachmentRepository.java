@@ -9,6 +9,7 @@ import io.quarkus.hibernate.reactive.panache.common.WithSession;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+// Note: FTPStorageService is still injected here for download and delete operations
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -28,7 +29,7 @@ import java.util.UUID;
 public class AttachmentRepository implements PanacheRepositoryBase<Attachment, Long> {
 
     @Inject
-    FTPStorageService ftpStorageService;
+    FTPStorageService ftpStorageService; // used for download + delete only (upload is handled in AttachmentService)
 
     // #region QUERY
 
@@ -58,44 +59,41 @@ public class AttachmentRepository implements PanacheRepositoryBase<Attachment, L
     // #region CREATE
 
     /**
-     * Upload file to FTP and persist metadata to m10Attachments.
+     * Persist attachment metadata to m10Attachments after FTP upload has already completed.
+     * The remotePath is the full FTP path returned by FTPStorageService.uploadFile().
      *
-     * @param directoryPath  full FTP directory, e.g. /pms-attachments/JOBTASKS/JT-2026-0001
+     * @param remotePath     full FTP path already stored, e.g. /pms-attachments/JOBTASKS/JT-2026-0001/abc-file.pdf
      * @param moduleType     "JOBTASKS"
      * @param referenceCode  jobTaskId, e.g. "JT-2026-0001"
      */
-    public Uni<Attachment> createAttachment(
-            String directoryPath,
+    public Uni<Attachment> persistAttachmentMeta(
+            String remotePath,
             String moduleType,
             String referenceCode,
             String originalName,
             String contentType,
             Long   fileSize,
-            byte[] fileData,
             String currentUser) {
 
-        return ftpStorageService.uploadFile(fileData, directoryPath, originalName)
-            .flatMap(remotePath ->
-                getSession().flatMap(session -> {
-                    Attachment a = new Attachment();
-                    String ext = getExt(originalName);
-                    a.setModuleType(moduleType.toUpperCase());
-                    a.setReferenceCode(referenceCode);
-                    a.setFileName(UUID.randomUUID().toString() + ext);
-                    a.setOriginalName(originalName);
-                    a.setFileSize(fileSize);
-                    a.setContentType(contentType);
-                    a.setFileExtension(ext);
-                    a.setStorageType("FTP");
-                    a.setFilePath(remotePath);
-                    a.setFileData(null);
-                    a.setUploadSource("WEB");
-                    a.setEntryStaff(currentUser);
-                    a.setEntryDate(LocalDateTime.now());
-                    return session.persist(a).replaceWith(a);
-                })
-            )
-            .onFailure().invoke(e -> System.err.println("[Attachment] createAttachment error: " + e.getMessage()));
+        return getSession().flatMap(session -> {
+            Attachment a = new Attachment();
+            String ext = getExt(originalName);
+            a.setModuleType(moduleType.toUpperCase());
+            a.setReferenceCode(referenceCode);
+            a.setFileName(UUID.randomUUID().toString() + ext);
+            a.setOriginalName(originalName);
+            a.setFileSize(fileSize);
+            a.setContentType(contentType);
+            a.setFileExtension(ext);
+            a.setStorageType("FTP");
+            a.setFilePath(remotePath);
+            a.setFileData(null);
+            a.setUploadSource("WEB");
+            a.setEntryStaff(currentUser);
+            a.setEntryDate(LocalDateTime.now());
+            return session.persist(a).replaceWith(a);
+        })
+        .onFailure().invoke(e -> System.err.println("[Attachment] persistAttachmentMeta error: " + e.getMessage()));
     }
 
     // #endregion
