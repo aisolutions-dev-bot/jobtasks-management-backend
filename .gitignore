@@ -1,15 +1,51 @@
-build/
+# Gradle
 .gradle/
-*.class
-*.jar
-!gradle/wrapper/gradle-wrapper.jar
-.idea/
-*.iml
+build/
+
+# Eclipse
+.project
+.classpath
+.settings/
+bin/
+
+# IntelliJ
+.idea
 *.ipr
+*.iml
 *.iws
+
+# NetBeans
+nb-configuration.xml
+
+# Visual Studio Code
+.vscode
+.factorypath
+
+# OSX
 .DS_Store
-target/
+
+# Vim
+*.swp
+*.swo
+
+# patch
+*.orig
+*.rej
 
 # Local environment
 .env
-.env
+
+# Plugin directory
+/.quarkus/cli/plugins/
+# TLS Certificates
+.certs/
+
+
+!build/*-runner
+!build/*-runner.jar
+!build/lib/*
+!build/quarkus-app/*
+
+# Formatter nvim 
+kls_database.db
+

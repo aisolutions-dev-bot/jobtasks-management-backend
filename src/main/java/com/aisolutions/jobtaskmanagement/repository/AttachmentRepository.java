@@ -2,14 +2,11 @@ package com.aisolutions.jobtaskmanagement.repository;
 
 import com.aisolutions.jobtaskmanagement.dto.AttachmentDTO;
 import com.aisolutions.jobtaskmanagement.entity.Attachment;
-import com.aisolutions.jobtaskmanagement.service.attachment.FTPStorageService;
 
 import io.quarkus.hibernate.reactive.panache.PanacheRepositoryBase;
 import io.quarkus.hibernate.reactive.panache.common.WithSession;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
-// Note: FTPStorageService is still injected here for download and delete operations
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -18,18 +15,13 @@ import java.util.UUID;
 /**
  * Reactive Panache repository for m10Attachments (JobTasks module).
  *
- * Storage strategy: FTP only — FileData column is always null.
- * The full remote path is stored in FilePath.
- *
- * The directoryPath is built by AttachmentService from m07SystemParameters
- * so this repo never hardcodes any path.
+ * This repository handles DB operations only. FTP upload/download/delete
+ * is orchestrated by {@link com.aisolutions.jobtaskmanagement.service.attachment.AttachmentService}
+ * using credentials loaded from m07SystemParameter at runtime.
  */
 @ApplicationScoped
 @WithSession
 public class AttachmentRepository implements PanacheRepositoryBase<Attachment, Long> {
-
-    @Inject
-    FTPStorageService ftpStorageService; // used for download + delete only (upload is handled in AttachmentService)
 
     // #region QUERY
 
@@ -47,9 +39,12 @@ public class AttachmentRepository implements PanacheRepositoryBase<Attachment, L
                 .setParameter("moduleType", moduleType)
                 .setParameter("referenceCode", referenceCode)
                 .getResultList()
-        ).onFailure().invoke(e -> System.err.println("[Attachment] findByModuleAndReference error: " + e.getMessage()));
+        ).onFailure().invoke(e ->
+            System.err.println("[Attachment] findByModuleAndReference error: " + e.getMessage())
+        );
     }
 
+    /** Retrieve attachment metadata (no file blob). */
     public Uni<Attachment> findByIdMeta(Long uniqId) {
         return getSession().flatMap(session -> session.find(Attachment.class, uniqId));
     }
@@ -59,12 +54,11 @@ public class AttachmentRepository implements PanacheRepositoryBase<Attachment, L
     // #region CREATE
 
     /**
-     * Persist attachment metadata to m10Attachments after FTP upload has already completed.
-     * The remotePath is the full FTP path returned by FTPStorageService.uploadFile().
+     * Persist attachment metadata after a successful FTP upload.
      *
-     * @param remotePath     full FTP path already stored, e.g. /pms-attachments/JOBTASKS/JT-2026-0001/abc-file.pdf
-     * @param moduleType     "JOBTASKS"
-     * @param referenceCode  jobTaskId, e.g. "JT-2026-0001"
+     * @param remotePath    full FTP path returned by FTPStorageService
+     * @param moduleType    "JOBTASKS"
+     * @param referenceCode jobTaskId, e.g. "JT-2026-0001"
      */
     public Uni<Attachment> persistAttachmentMeta(
             String remotePath,
@@ -92,51 +86,25 @@ public class AttachmentRepository implements PanacheRepositoryBase<Attachment, L
             a.setEntryStaff(currentUser);
             a.setEntryDate(LocalDateTime.now());
             return session.persist(a).replaceWith(a);
-        })
-        .onFailure().invoke(e -> System.err.println("[Attachment] persistAttachmentMeta error: " + e.getMessage()));
-    }
-
-    // #endregion
-
-    // #region DOWNLOAD
-
-    public Uni<byte[]> downloadFileContent(Long uniqId) {
-        return findByIdMeta(uniqId).flatMap(a -> {
-            if (a == null) return Uni.createFrom().failure(new RuntimeException("Attachment not found: " + uniqId));
-            if ("FTP".equalsIgnoreCase(a.getStorageType())) {
-                if (a.getFilePath() == null || a.getFilePath().isBlank())
-                    return Uni.createFrom().failure(new RuntimeException("FilePath missing for attachment: " + uniqId));
-                return ftpStorageService.downloadFile(a.getFilePath());
-            } else if ("LOCAL".equalsIgnoreCase(a.getStorageType())) {
-                byte[] data = a.getFileData();
-                if (data == null) return Uni.createFrom().failure(new RuntimeException("No file data in DB: " + uniqId));
-                return Uni.createFrom().item(data);
-            }
-            return Uni.createFrom().failure(new RuntimeException("Unknown StorageType: " + a.getStorageType()));
-        });
+        }).onFailure().invoke(e ->
+            System.err.println("[Attachment] persistAttachmentMeta error: " + e.getMessage())
+        );
     }
 
     // #endregion
 
     // #region DELETE
 
-    public Uni<Boolean> deleteAttachment(Long uniqId) {
-        return findByIdMeta(uniqId).flatMap(a -> {
-            if (a == null) return Uni.createFrom().item(false);
-
-            Uni<Boolean> deleteFromFtp =
-                ("FTP".equalsIgnoreCase(a.getStorageType()) && a.getFilePath() != null)
-                    ? ftpStorageService.deleteFile(a.getFilePath())
-                    : Uni.createFrom().item(true);
-
-            return deleteFromFtp.flatMap(ignored ->
-                getSession().flatMap(session ->
-                    session.find(Attachment.class, uniqId)
-                        .onItem().ifNotNull().transformToUni(entity -> session.remove(entity).replaceWith(true))
-                        .onItem().ifNull().continueWith(false)
-                )
-            );
-        }).onFailure().invoke(e -> System.err.println("[Attachment] deleteAttachment error: " + e.getMessage()));
+    /** Delete attachment record from DB. FTP deletion must be done before calling this. */
+    public Uni<Boolean> deleteFromDb(Long uniqId) {
+        return getSession().flatMap(session ->
+            session.find(Attachment.class, uniqId)
+                .onItem().ifNotNull().transformToUni(entity ->
+                    session.remove(entity).replaceWith(true))
+                .onItem().ifNull().continueWith(false)
+        ).onFailure().invoke(e ->
+            System.err.println("[Attachment] deleteFromDb error: " + e.getMessage())
+        );
     }
 
     // #endregion

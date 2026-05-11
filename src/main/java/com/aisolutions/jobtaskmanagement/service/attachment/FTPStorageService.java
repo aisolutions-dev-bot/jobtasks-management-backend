@@ -3,7 +3,6 @@ package com.aisolutions.jobtaskmanagement.service.attachment;
 import org.apache.commons.net.ftp.FTP;
 import org.apache.commons.net.ftp.FTPClient;
 import org.apache.commons.net.ftp.FTPReply;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import io.smallrye.mutiny.Uni;
 import io.vertx.mutiny.core.Vertx;
@@ -20,35 +19,20 @@ import java.util.UUID;
 /**
  * FTP storage service for JobTasks attachments.
  *
- * Path structure (all from application.properties / env vars):
- *   {ftp.base-path}/{ftp.jobtasks-folder}/{jobTaskId}/{uuid-filename.ext}
+ * All credentials and path configuration are supplied at call time via
+ * {@link FtpConfig}, which is loaded from m07SystemParameter by
+ * {@link com.aisolutions.jobtaskmanagement.service.SystemParameterService}.
  *
+ * Remote path structure:
+ *   {FtpConfig.mainUrl}/{FtpConfig.folder}/{jobTaskId}/{uuid-filename.ext}
  * Example:
- *   /test.borneochemicalintl.com/pms-attachments/JOBTASKS/JT-2026-0001/a1b2c3d4-invoice.pdf
+ *   /test.borneochemicalintl.com/JOBTASKS/JT-2026-0001/a1b2c3d4-invoice.pdf
  */
 @ApplicationScoped
 public class FTPStorageService {
 
-    @ConfigProperty(name = "ftp.host")
-    String host;
-
-    @ConfigProperty(name = "ftp.port", defaultValue = "21")
-    int port;
-
-    @ConfigProperty(name = "ftp.username")
-    String username;
-
-    @ConfigProperty(name = "ftp.password")
-    String password;
-
-    @ConfigProperty(name = "ftp.base-path", defaultValue = "/test.borneochemicalintl.com/pms-attachments")
-    String basePath;
-
-    @ConfigProperty(name = "ftp.jobtasks-folder", defaultValue = "JOBTASKS")
-    String jobtasksFolder;
-
-    private static final int CONNECT_TIMEOUT_MS = 30_000;
-    private static final Duration DATA_TIMEOUT   = Duration.ofSeconds(60);
+    private static final int      CONNECT_TIMEOUT_MS = 30_000;
+    private static final Duration DATA_TIMEOUT       = Duration.ofSeconds(60);
 
     @Inject
     Vertx vertx;
@@ -56,25 +40,18 @@ public class FTPStorageService {
     // ── Public API ────────────────────────────────────────────────────────────
 
     /**
-     * Build the full remote directory for a given jobTaskId.
-     * e.g. /test.borneochemicalintl.com/pms-attachments/JOBTASKS/JT-2026-0001
-     */
-    public String buildDirectory(String jobTaskId) {
-        return basePath + "/" + jobtasksFolder + "/" + jobTaskId;
-    }
-
-    /**
-     * Upload a file. Returns the full remote path of the stored file.
+     * Upload a file to FTP. Returns the full remote path of the stored file.
      *
      * @param fileData      raw bytes
-     * @param directoryPath full FTP directory path (already built by caller)
+     * @param directoryPath full FTP directory path (built by caller via {@link FtpConfig#buildDirectory})
      * @param originalName  original filename, used to generate a unique stored name
+     * @param config        FTP credentials and path settings from m07SystemParameter
      */
-    public Uni<String> uploadFile(byte[] fileData, String directoryPath, String originalName) {
+    public Uni<String> uploadFile(byte[] fileData, String directoryPath, String originalName, FtpConfig config) {
         return vertx.executeBlocking(Uni.createFrom().item(() -> {
             FTPClient ftp = new FTPClient();
             try {
-                connect(ftp);
+                connect(ftp, config);
                 createDirectories(ftp, directoryPath);
                 String uniqueName = generateUniqueName(originalName);
                 String remotePath = directoryPath + "/" + uniqueName;
@@ -97,12 +74,15 @@ public class FTPStorageService {
 
     /**
      * Download file bytes from FTP.
+     *
+     * @param remotePath full FTP path (stored in m10Attachments.FilePath)
+     * @param config     FTP credentials from m07SystemParameter
      */
-    public Uni<byte[]> downloadFile(String remotePath) {
+    public Uni<byte[]> downloadFile(String remotePath, FtpConfig config) {
         return vertx.executeBlocking(Uni.createFrom().item(() -> {
             FTPClient ftp = new FTPClient();
             try {
-                connect(ftp);
+                connect(ftp, config);
                 try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
                     if (!ftp.retrieveFile(remotePath, out)) {
                         throw new RuntimeException("FTP retrieveFile failed: " + ftp.getReplyString());
@@ -120,12 +100,15 @@ public class FTPStorageService {
 
     /**
      * Delete a file from FTP. Non-existent file is treated as success.
+     *
+     * @param remotePath full FTP path (stored in m10Attachments.FilePath)
+     * @param config     FTP credentials from m07SystemParameter
      */
-    public Uni<Boolean> deleteFile(String remotePath) {
+    public Uni<Boolean> deleteFile(String remotePath, FtpConfig config) {
         return vertx.executeBlocking(Uni.createFrom().item(() -> {
             FTPClient ftp = new FTPClient();
             try {
-                connect(ftp);
+                connect(ftp, config);
                 boolean deleted = ftp.deleteFile(remotePath);
                 System.out.println("[FTP] Delete " + (deleted ? "ok" : "not found") + ": " + remotePath);
                 return true;
@@ -140,22 +123,22 @@ public class FTPStorageService {
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    private void connect(FTPClient ftp) throws IOException {
+    private void connect(FTPClient ftp, FtpConfig config) throws IOException {
         ftp.setConnectTimeout(CONNECT_TIMEOUT_MS);
         ftp.setDataTimeout(DATA_TIMEOUT);
         ftp.setDefaultTimeout(CONNECT_TIMEOUT_MS);
-        ftp.connect(host, port);
+        ftp.connect(config.host(), config.port());
         if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
             ftp.disconnect();
             throw new RuntimeException("FTP refused connection. Reply: " + ftp.getReplyCode());
         }
-        if (!ftp.login(username, password)) {
+        if (!ftp.login(config.username(), config.password())) {
             ftp.disconnect();
-            throw new RuntimeException("FTP login failed for user: " + username);
+            throw new RuntimeException("FTP login failed for user: " + config.username());
         }
         ftp.setFileType(FTP.BINARY_FILE_TYPE);
         ftp.enterLocalPassiveMode();
-        System.out.println("[FTP] Connected to " + host + " as " + username);
+        System.out.println("[FTP] Connected to " + config.host() + " as " + config.username());
     }
 
     private void disconnect(FTPClient ftp) {
