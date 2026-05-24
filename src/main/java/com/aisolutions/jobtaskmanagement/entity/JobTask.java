@@ -71,6 +71,9 @@ public class JobTask extends PanacheEntityBase {
     @Column(name = "Remarks", length = 2000)
     private String remarks;
 
+    @Column(name = "ProgressRemarks", length = 500)
+    private String progressRemarks;
+
     @Column(name = "AttachmentPath", length = 500)
     private String attachmentPath;
 

@@ -39,6 +39,7 @@ public class JobTaskDTO {
         private BigDecimal    estimatedHours;
         private BigDecimal    actualHours;
         private String        remarks;
+        private String        progressRemarks;
         private String        attachmentPath;
         private String        entryStaff;
         private LocalDateTime entryDate;
@@ -77,6 +78,30 @@ public class JobTaskDTO {
         private BigDecimal    actualHours;
         private String        remarks;
         private String        lastEditStaff;
+    }
+
+    // ─── Reassign (assignor only) ───────────────────────────────────────────
+
+    @Data
+    public static class ReassignRequest {
+        private String newAssigneeStaffId;
+        private String lastEditStaff;
+    }
+
+    // ─── Reschedule (assignor only) ─────────────────────────────────────────
+
+    @Data
+    public static class RescheduleRequest {
+        private java.time.LocalDate newDueDate;
+        private String lastEditStaff;
+    }
+
+    // ─── Progress remarks update (assignee only) ────────────────────────────
+
+    @Data
+    public static class UpdateProgressRemarksRequest {
+        private String progressRemarks;
+        private String lastEditStaff;
     }
 
     // ─── Status update ──────────────────────────────────────────────────────

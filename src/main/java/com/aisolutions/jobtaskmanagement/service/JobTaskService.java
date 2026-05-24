@@ -7,6 +7,8 @@ import com.aisolutions.jobtaskmanagement.entity.JobTask;
 import com.aisolutions.jobtaskmanagement.entity.Staff;
 import com.aisolutions.jobtaskmanagement.repository.JobTaskRepository;
 import com.aisolutions.jobtaskmanagement.repository.StaffRepository;
+import com.aisolutions.jobtaskmanagement.repository.UserActionLogRepository;
+import com.aisolutions.jobtaskmanagement.util.DeviceInfo;
 
 import io.quarkus.hibernate.reactive.panache.common.WithSession;
 import io.quarkus.hibernate.reactive.panache.common.WithTransaction;
@@ -48,6 +50,9 @@ public class JobTaskService {
 
     @Inject
     StaffRepository staffRepo;
+
+    @Inject
+    UserActionLogRepository logRepo;
 
     @Inject
     @RestClient
@@ -221,6 +226,56 @@ public class JobTaskService {
                 });
     }
 
+    // ─── Reassign (assignor only) ─────────────────────────────────────────────
+
+    @WithTransaction
+    public Uni<JobTaskResponse> reassign(Long id, ReassignRequest req, DeviceInfo deviceInfo) {
+        return taskRepo.findActiveById(id)
+                .onItem().ifNull().failWith(() -> new NotFoundException("Task " + id + " not found"))
+                .flatMap(task -> {
+                    String original = task.getAssigneeStaffId();
+                    task.setAssigneeStaffId(req.getNewAssigneeStaffId());
+                    task.setLastEditStaff(req.getLastEditStaff());
+                    task.setLastEdtiDate(LocalDateTime.now());
+                    String remarks = "Reassigned from " + original + " to " + req.getNewAssigneeStaffId();
+                    return logRepo.log(req.getLastEditStaff(), "JOBTASKS", task.getJobTaskId(), "REASSIGN", deviceInfo, remarks)
+                            .flatMap(ignored -> enrichSingle(task));
+                });
+    }
+
+    // ─── Reschedule (assignor only) ───────────────────────────────────────────
+
+    @WithTransaction
+    public Uni<JobTaskResponse> reschedule(Long id, RescheduleRequest req, DeviceInfo deviceInfo) {
+        return taskRepo.findActiveById(id)
+                .onItem().ifNull().failWith(() -> new NotFoundException("Task " + id + " not found"))
+                .flatMap(task -> {
+                    String original = task.getDueDate() != null
+                            ? task.getDueDate().toLocalDate().toString() : "none";
+                    String updated  = req.getNewDueDate() != null ? req.getNewDueDate().toString() : "none";
+                    task.setDueDate(req.getNewDueDate() != null ? req.getNewDueDate().atStartOfDay() : null);
+                    task.setLastEditStaff(req.getLastEditStaff());
+                    task.setLastEdtiDate(LocalDateTime.now());
+                    String remarks = "Rescheduled from " + original + " to " + updated;
+                    return logRepo.log(req.getLastEditStaff(), "JOBTASKS", task.getJobTaskId(), "RESCHEDULE", deviceInfo, remarks)
+                            .flatMap(ignored -> enrichSingle(task));
+                });
+    }
+
+    // ─── Progress remarks (assignee only) ────────────────────────────────────
+
+    @WithTransaction
+    public Uni<JobTaskResponse> updateProgressRemarks(Long id, UpdateProgressRemarksRequest req) {
+        return taskRepo.findActiveById(id)
+                .onItem().ifNull().failWith(() -> new NotFoundException("Task " + id + " not found"))
+                .flatMap(task -> {
+                    task.setProgressRemarks(req.getProgressRemarks());
+                    task.setLastEditStaff(req.getLastEditStaff());
+                    task.setLastEdtiDate(LocalDateTime.now());
+                    return enrichSingle(task);
+                });
+    }
+
     // ─── Soft delete ──────────────────────────────────────────────────────────
 
     @WithTransaction
@@ -277,6 +332,7 @@ public class JobTaskService {
         r.setEstimatedHours(t.getEstimatedHours());
         r.setActualHours(t.getActualHours());
         r.setRemarks(t.getRemarks());
+        r.setProgressRemarks(t.getProgressRemarks());
         r.setAttachmentPath(t.getAttachmentPath());
         r.setEntryStaff(t.getEntryStaff());
         r.setEntryDate(t.getEntryDate());
