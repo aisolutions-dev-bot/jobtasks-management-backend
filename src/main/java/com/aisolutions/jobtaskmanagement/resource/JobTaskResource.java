@@ -2,6 +2,7 @@ package com.aisolutions.jobtaskmanagement.resource;
 
 import com.aisolutions.jobtaskmanagement.dto.JobTaskDTO.*;
 import com.aisolutions.jobtaskmanagement.service.JobTaskService;
+import com.aisolutions.jobtaskmanagement.service.auth.JwtClaimsExtractor;
 import com.aisolutions.jobtaskmanagement.util.DeviceInfo;
 import com.aisolutions.jobtaskmanagement.util.DeviceInfoExtractor;
 
@@ -29,6 +30,9 @@ public class JobTaskResource {
     @Inject
     JobTaskService service;
 
+    @Inject
+    JwtClaimsExtractor jwtClaimsExtractor;
+
     @Context
     HttpHeaders headers;
 
@@ -47,18 +51,17 @@ public class JobTaskResource {
     }
 
     /**
-     * GET /api/v1/job-tasks?groupAuthority=X&staffCode=Y
+     * GET /api/v1/job-tasks
      *
-     * RBAC visibility:
+     * RBAC visibility (resolved from JWT):
      *   a2401.02=1 → ALL records
      *   a2401.02=0 + a2401.01=1 → same department as current user
      *   both 0 → only tasks where I am assignor or assignee
      */
     @GET
-    public Uni<List<JobTaskResponse>> list(
-            @QueryParam("groupAuthority") String groupAuthority,
-            @QueryParam("staffCode") String staffCode) {
-        return service.listWithRbac(groupAuthority, staffCode);
+    public Uni<List<JobTaskResponse>> list() {
+        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
+        return service.listWithRbac(claims.groupAuthority(), claims.staffId());
     }
 
     /**
