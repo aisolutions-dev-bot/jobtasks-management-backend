@@ -7,6 +7,8 @@ import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -36,12 +38,19 @@ public class SystemParameterService {
     @Inject
     SystemParameterRepository systemParameterRepository;
 
+    private static final Duration CACHE_TTL = Duration.ofMinutes(5);
+
+    private volatile FtpConfig cachedFtpConfig;
+    private volatile Instant   cacheExpiry = Instant.MIN;
+
     /**
-     * Load FTP configuration from m07SystemParameter in a single query.
-     * Fails with {@link IllegalStateException} if ATTACHMENT-MODE is not "FTP"
-     * or if any required parameter is missing.
+     * Load FTP configuration from m07SystemParameter.
+     * Cached for 5 minutes — DB changes take effect within 5 minutes, no redeploy needed.
      */
     public Uni<FtpConfig> loadFtpConfig() {
+        if (cachedFtpConfig != null && Instant.now().isBefore(cacheExpiry)) {
+            return Uni.createFrom().item(cachedFtpConfig);
+        }
         return systemParameterRepository.getParameterMap(FTP_PARAMS)
             .map(params -> {
                 String mode = params.get("ATTACHMENT-MODE");
@@ -52,7 +61,7 @@ public class SystemParameterService {
                     throw new IllegalStateException(
                         "ATTACHMENT-MODE is '" + mode + "' — only FTP is supported by this module");
                 }
-                return new FtpConfig(
+                FtpConfig config = new FtpConfig(
                     require(params, "FTP-HOST"),
                     21,
                     require(params, "FTP-USERNAME"),
@@ -60,7 +69,16 @@ public class SystemParameterService {
                     require(params, "ATTACHMENT-MAIN-URL"),
                     require(params, "ATTACHMENT-PATH-JOBTASKS")
                 );
+                cachedFtpConfig = config;
+                cacheExpiry = Instant.now().plus(CACHE_TTL);
+                return config;
             });
+    }
+
+    /** Force the next {@link #loadFtpConfig()} call to re-fetch from DB. */
+    public void clearFtpConfigCache() {
+        cachedFtpConfig = null;
+        cacheExpiry     = Instant.MIN;
     }
 
     private static String require(Map<String, String> params, String key) {

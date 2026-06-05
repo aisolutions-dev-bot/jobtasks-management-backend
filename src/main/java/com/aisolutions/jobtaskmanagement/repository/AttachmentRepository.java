@@ -25,6 +25,7 @@ public class AttachmentRepository implements PanacheRepositoryBase<Attachment, L
 
     // #region QUERY
 
+    @SuppressWarnings("null")
     public Uni<List<AttachmentDTO>> findByModuleAndReference(String moduleType, String referenceCode) {
         return getSession().flatMap(session ->
             session.createQuery(
@@ -45,6 +46,7 @@ public class AttachmentRepository implements PanacheRepositoryBase<Attachment, L
     }
 
     /** Retrieve attachment metadata (no file blob). */
+    @SuppressWarnings("null")
     public Uni<Attachment> findByIdMeta(Long uniqId) {
         return getSession().flatMap(session -> session.find(Attachment.class, uniqId));
     }

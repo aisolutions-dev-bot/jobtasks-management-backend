@@ -1,5 +1,6 @@
 package com.aisolutions.jobtaskmanagement.resource;
 
+import com.aisolutions.jobtaskmanagement.service.SystemParameterService;
 import com.aisolutions.jobtaskmanagement.service.attachment.AttachmentService;
 
 import io.smallrye.mutiny.Uni;
@@ -8,10 +9,10 @@ import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
+import org.jboss.logging.Logger;
 import org.jboss.resteasy.reactive.RestForm;
 import org.jboss.resteasy.reactive.multipart.FileUpload;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Map;
 
@@ -30,8 +31,13 @@ import java.util.Map;
 @Produces(MediaType.APPLICATION_JSON)
 public class AttachmentResource {
 
+    private static final Logger LOG = Logger.getLogger(AttachmentResource.class);
+
     @Inject
     AttachmentService attachmentService;
+
+    @Inject
+    SystemParameterService systemParameterService;
 
     // ─── GET list ─────────────────────────────────────────────────────────────
 
@@ -53,20 +59,13 @@ public class AttachmentResource {
     @Path("/download/{id}")
     @Produces(MediaType.APPLICATION_OCTET_STREAM)
     public Uni<Response> downloadAttachment(@PathParam("id") Long id) {
-        return attachmentService.getAttachmentMeta(id)
-            .flatMap(meta -> {
-                if (meta == null) {
-                    return Uni.createFrom().item(Response.status(404)
-                        .entity("Attachment not found").build());
-                }
-                return attachmentService.downloadFile(id)
-                    .onItem().transform(bytes -> Response.ok(bytes)
-                        .header("Content-Disposition",
-                            "attachment; filename=\"" + meta.getOriginalName() + "\"")
-                        .header("Content-Type",
-                            meta.getContentType() != null ? meta.getContentType() : "application/octet-stream")
-                        .build());
-            })
+        return attachmentService.downloadAttachment(id)
+            .onItem().transform(result -> Response.ok(result.bytes())
+                .header("Content-Disposition",
+                    "attachment; filename=\"" + result.originalName() + "\"")
+                .header("Content-Type",
+                    result.contentType() != null ? result.contentType() : "application/octet-stream")
+                .build())
             .onFailure().recoverWithItem(e -> Response.serverError()
                 .entity("Failed to download: " + e.getMessage()).build());
     }
@@ -99,7 +98,7 @@ public class AttachmentResource {
         try {
             fileData = Files.readAllBytes(file.uploadedFile());
         } catch (Exception e) {
-            System.err.println("[AttachmentResource] file read error: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            LOG.errorf("[Attachment] File read error: %s: %s", e.getClass().getSimpleName(), e.getMessage());
             return Uni.createFrom().item(Response.serverError()
                 .entity(Map.of("error", "Failed to read uploaded file: " + e.getMessage())).build());
         }
@@ -111,9 +110,18 @@ public class AttachmentResource {
             .onFailure(IllegalArgumentException.class).recoverWithItem(e ->
                 Response.status(400).entity(Map.of("error", e.getMessage())).build())
             .onFailure().recoverWithItem(e -> {
-                System.err.println("[AttachmentResource] upload error: " + e.getMessage());
+                LOG.errorf("[Attachment] Upload error: %s", e.getMessage());
                 return Response.serverError().entity(Map.of("error", "Upload failed")).build();
             });
+    }
+
+    // ─── CACHE ────────────────────────────────────────────────────────────────
+
+    @POST
+    @Path("/config/refresh")
+    public Response refreshConfig() {
+        systemParameterService.clearFtpConfigCache();
+        return Response.ok(Map.of("message", "FTP config cache cleared. Next attachment operation will reload from DB.")).build();
     }
 
     // ─── DELETE ───────────────────────────────────────────────────────────────

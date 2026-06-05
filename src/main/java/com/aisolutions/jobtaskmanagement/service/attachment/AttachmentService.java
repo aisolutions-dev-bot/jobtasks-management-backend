@@ -9,6 +9,7 @@ import io.quarkus.hibernate.reactive.panache.Panache;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.jboss.logging.Logger;
 
 import java.util.List;
 
@@ -28,6 +29,7 @@ import java.util.List;
 @ApplicationScoped
 public class AttachmentService {
 
+    private static final Logger LOG           = Logger.getLogger(AttachmentService.class);
     /** Fixed module-level folder on the FTP server — never changes for this module. */
     private static final String MODULE_FOLDER = "jobtasks-attachments";
 
@@ -52,18 +54,17 @@ public class AttachmentService {
         return attachmentRepository.findByModuleAndReference("JOBTASKS", jobTaskId);
     }
 
-    public Uni<Attachment> getAttachmentMeta(Long uniqId) {
-        return attachmentRepository.findByIdMeta(uniqId);
-    }
-
     // ── DOWNLOAD ──────────────────────────────────────────────────────────────
 
+    /** Carries file bytes together with the metadata needed for response headers. */
+    public record DownloadResult(byte[] bytes, String originalName, String contentType) {}
+
     /**
-     * Download file bytes.
-     * Loads FTP credentials from m07SystemParameter, then retrieves the file
-     * from FTP (or falls back to DB bytes for legacy LOCAL storage).
+     * Fetch attachment metadata and file bytes in a single flow.
+     * Uses cached FTP config — no extra DB query for credentials.
      */
-    public Uni<byte[]> downloadFile(Long uniqId) {
+    @SuppressWarnings("null")
+    public Uni<DownloadResult> downloadAttachment(Long uniqId) {
         return systemParameterService.loadFtpConfig()
             .flatMap(config ->
                 attachmentRepository.findByIdMeta(uniqId).flatMap(a -> {
@@ -76,7 +77,8 @@ public class AttachmentService {
                             return Uni.createFrom().failure(
                                 new RuntimeException("FilePath missing for attachment: " + uniqId));
                         }
-                        return ftpStorageService.downloadFile(a.getFilePath(), config);
+                        return ftpStorageService.downloadFile(a.getFilePath(), config)
+                            .map(bytes -> new DownloadResult(bytes, a.getOriginalName(), a.getContentType()));
                     }
                     // LOCAL fallback
                     byte[] data = a.getFileData();
@@ -84,7 +86,8 @@ public class AttachmentService {
                         return Uni.createFrom().failure(
                             new RuntimeException("No file data in DB for attachment: " + uniqId));
                     }
-                    return Uni.createFrom().item(data);
+                    return Uni.createFrom().item(
+                        new DownloadResult(data, a.getOriginalName(), a.getContentType()));
                 })
             );
     }
@@ -115,7 +118,7 @@ public class AttachmentService {
         return systemParameterService.loadFtpConfig()
             .flatMap(config -> {
                 String directoryPath = config.buildDirectory(MODULE_FOLDER, jobTaskId);
-                System.out.println("[AttachmentService] Uploading to: " + directoryPath);
+                LOG.infof("[Attachment] Uploading file for task: %s", jobTaskId);
 
                 // Step 1: upload to FTP (blocking I/O on worker thread)
                 // Step 2: persist metadata (DB transaction), only after FTP succeeds

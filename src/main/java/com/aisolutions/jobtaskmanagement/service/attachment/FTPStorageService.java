@@ -3,6 +3,7 @@ package com.aisolutions.jobtaskmanagement.service.attachment;
 import org.apache.commons.net.ftp.FTP;
 import org.apache.commons.net.ftp.FTPClient;
 import org.apache.commons.net.ftp.FTPReply;
+import org.jboss.logging.Logger;
 
 import io.smallrye.mutiny.Uni;
 import io.vertx.mutiny.core.Vertx;
@@ -31,8 +32,9 @@ import java.util.UUID;
 @ApplicationScoped
 public class FTPStorageService {
 
-    private static final int      CONNECT_TIMEOUT_MS = 30_000;
-    private static final Duration DATA_TIMEOUT       = Duration.ofSeconds(60);
+    private static final Logger   LOG                = Logger.getLogger(FTPStorageService.class);
+    private static final int      CONNECT_TIMEOUT_MS = 15_000;
+    private static final Duration DATA_TIMEOUT       = Duration.ofSeconds(15);
 
     @Inject
     Vertx vertx;
@@ -61,10 +63,10 @@ public class FTPStorageService {
                         throw new RuntimeException("FTP storeFile failed: " + ftp.getReplyString());
                     }
                 }
-                System.out.println("[FTP] Uploaded: " + remotePath);
+                LOG.info("[FTP] Upload successful");
                 return remotePath;
             } catch (Exception e) {
-                System.err.println("[FTP] Upload error: " + e.getMessage());
+                LOG.errorf("[FTP] Upload error: %s", e.getMessage());
                 throw new RuntimeException("FTP upload failed: " + e.getMessage(), e);
             } finally {
                 disconnect(ftp);
@@ -90,7 +92,7 @@ public class FTPStorageService {
                     return out.toByteArray();
                 }
             } catch (Exception e) {
-                System.err.println("[FTP] Download error: " + e.getMessage());
+                LOG.errorf("[FTP] Download error: %s", e.getMessage());
                 throw new RuntimeException("FTP download failed: " + e.getMessage(), e);
             } finally {
                 disconnect(ftp);
@@ -110,10 +112,10 @@ public class FTPStorageService {
             try {
                 connect(ftp, config);
                 boolean deleted = ftp.deleteFile(remotePath);
-                System.out.println("[FTP] Delete " + (deleted ? "ok" : "not found") + ": " + remotePath);
+                LOG.infof("[FTP] Delete %s", deleted ? "successful" : "skipped (file not found)");
                 return true;
             } catch (Exception e) {
-                System.err.println("[FTP] Delete error: " + e.getMessage());
+                LOG.errorf("[FTP] Delete error: %s", e.getMessage());
                 throw new RuntimeException("FTP delete failed: " + e.getMessage(), e);
             } finally {
                 disconnect(ftp);
@@ -134,11 +136,11 @@ public class FTPStorageService {
         }
         if (!ftp.login(config.username(), config.password())) {
             ftp.disconnect();
-            throw new RuntimeException("FTP login failed for user: " + config.username());
+            throw new RuntimeException("FTP login failed — check FTP credentials in m07SystemParameter");
         }
         ftp.setFileType(FTP.BINARY_FILE_TYPE);
         ftp.enterLocalPassiveMode();
-        System.out.println("[FTP] Connected to " + config.host() + " as " + config.username());
+        LOG.info("[FTP] Connected");
     }
 
     private void disconnect(FTPClient ftp) {
