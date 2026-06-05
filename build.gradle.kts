@@ -38,7 +38,7 @@ dependencies {
     annotationProcessor("org.projectlombok:lombok:1.18.42")
 
     // Shared library
-    implementation("com.aisolutions:ai-solutions-java-shared:0.0.3")
+    implementation("com.aisolutions:ai-solutions-java-shared:0.0.4")
 
     // FTP client
     implementation("commons-net:commons-net:3.10.0")
