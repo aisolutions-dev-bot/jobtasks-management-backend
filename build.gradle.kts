@@ -32,6 +32,7 @@ dependencies {
     implementation("io.quarkus:quarkus-vertx")
     implementation("io.quarkus:quarkus-jackson")
     implementation("io.quarkus:quarkus-hibernate-validator")
+    implementation("io.quarkus:quarkus-cache")
 
     // Lombok
     compileOnly("org.projectlombok:lombok:1.18.42")

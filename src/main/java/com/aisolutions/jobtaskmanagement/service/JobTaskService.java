@@ -10,6 +10,8 @@ import com.aisolutions.jobtaskmanagement.repository.StaffRepository;
 import com.aisolutions.jobtaskmanagement.repository.UserActionLogRepository;
 import com.aisolutions.jobtaskmanagement.util.DeviceInfo;
 
+import io.quarkus.cache.CacheKey;
+import io.quarkus.cache.CacheResult;
 import io.quarkus.hibernate.reactive.panache.common.WithSession;
 import io.quarkus.hibernate.reactive.panache.common.WithTransaction;
 import io.smallrye.mutiny.Uni;
@@ -62,8 +64,30 @@ public class JobTaskService {
 
     @WithSession
     public Uni<List<StaffSummary>> listStaff() {
-        return staffRepo.findAllOrdered()
+        return getCachedStaffDropdown()
                 .map(list -> list.stream().map(this::toStaffSummary).collect(Collectors.toList()));
+    }
+
+    /** Staff directory for assignor/assignee enrichment — rarely changes. */
+    @CacheResult(cacheName = "jobtasks-staff-list")
+    public Uni<List<Staff>> getCachedStaffList() {
+        return staffRepo.findAllOrdered();
+    }
+
+    /** Assignor/assignee dropdown — short TTL so new staff are assignable quickly. */
+    @CacheResult(cacheName = "jobtasks-staff-dropdown")
+    public Uni<List<Staff>> getCachedStaffDropdown() {
+        return staffRepo.findAllOrdered();
+    }
+
+    /** RBAC access codes per groupAuthority — rarely change. */
+    @CacheResult(cacheName = "jobtasks-rbac-access")
+    public Uni<List<GroupAuthorityAccessDTO>> getCachedAccess(@CacheKey String groupAuthority) {
+        return accessClient.getAccessByModule(groupAuthority, MODULE_ID)
+                .onFailure().recoverWithItem(e -> {
+                    LOG.warnf("RBAC fetch failed: %s", e.getMessage());
+                    return List.of();
+                });
     }
 
     // ─── List with RBAC ───────────────────────────────────────────────────────
@@ -73,13 +97,11 @@ public class JobTaskService {
 
         Uni<List<GroupAuthorityAccessDTO>> accessUni =
                 (groupAuthority != null && !groupAuthority.isBlank())
-                        ? accessClient.getAccessByModule(groupAuthority, MODULE_ID)
-                                      .onFailure().recoverWithItem(e -> {
-                                          LOG.warnf("RBAC fetch failed: %s", e.getMessage());
-                                          return List.of();
-                                      })
+                        ? getCachedAccess(groupAuthority)
                         : Uni.createFrom().item(List.of());
 
+        // Current user's own record is looked up directly (not cached) so RBAC
+        // department resolution reflects changes immediately.
         Uni<Staff> staffUni =
                 (staffCode != null && !staffCode.isBlank())
                         ? staffRepo.findByStaffId(staffCode)
@@ -100,8 +122,9 @@ public class JobTaskService {
                     } else if (staff != null) {
                         tasksUni = taskRepo.findByStaffId(staff.getStaffId());
                     } else {
-                        // staffCode not provided — return all active tasks as fallback
-                        tasksUni = taskRepo.findAllActive();
+                        // Fail closed: unresolved staff identity must not see all tasks.
+                        LOG.warnf("listWithRbac: could not resolve staff for staffCode='%s' — returning empty list", staffCode);
+                        tasksUni = Uni.createFrom().item(List.of());
                     }
 
                     return tasksUni.flatMap(tasks -> enrichWithStaff(tasks));
@@ -299,7 +322,7 @@ public class JobTaskService {
     private Uni<List<JobTaskResponse>> enrichWithStaff(List<JobTask> tasks) {
         if (tasks.isEmpty()) return Uni.createFrom().item(List.of());
 
-        return staffRepo.findAllOrdered().map(staffList -> {
+        return getCachedStaffList().map(staffList -> {
             Map<String, Staff> staffMap = staffList.stream()
                     .collect(Collectors.toMap(Staff::getStaffId, Function.identity()));
             return tasks.stream()

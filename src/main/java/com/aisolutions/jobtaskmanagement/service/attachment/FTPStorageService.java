@@ -145,7 +145,11 @@ public class FTPStorageService {
 
     private void disconnect(FTPClient ftp) {
         try {
-            if (ftp.isConnected()) { ftp.logout(); ftp.disconnect(); }
+            if (ftp.isConnected()) {
+                ftp.logout();
+                ftp.disconnect();
+                LOG.info("[FTP] Disconnected");
+            }
         } catch (IOException ignored) {}
     }
 
