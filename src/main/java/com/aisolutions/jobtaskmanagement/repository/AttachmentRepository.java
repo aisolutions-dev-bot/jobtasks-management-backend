@@ -7,8 +7,8 @@ import io.quarkus.hibernate.reactive.panache.PanacheRepositoryBase;
 import io.quarkus.hibernate.reactive.panache.common.WithSession;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
+import com.aisolutions.shared.util.DateUtil;
 
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -86,7 +86,7 @@ public class AttachmentRepository implements PanacheRepositoryBase<Attachment, L
             a.setFileData(null);
             a.setUploadSource("WEB");
             a.setEntryStaff(currentUser);
-            a.setEntryDate(LocalDateTime.now());
+            a.setEntryDate(DateUtil.nowSGT());
             return session.persist(a).replaceWith(a);
         }).onFailure().invoke(e ->
             System.err.println("[Attachment] persistAttachmentMeta error: " + e.getMessage())

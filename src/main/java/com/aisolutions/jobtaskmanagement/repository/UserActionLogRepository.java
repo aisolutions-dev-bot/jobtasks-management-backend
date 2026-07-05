@@ -2,12 +2,11 @@ package com.aisolutions.jobtaskmanagement.repository;
 
 import com.aisolutions.jobtaskmanagement.entity.UserActionLog;
 import com.aisolutions.jobtaskmanagement.util.DeviceInfo;
+import com.aisolutions.shared.util.DateUtil;
 import io.quarkus.hibernate.reactive.panache.PanacheRepositoryBase;
 import io.quarkus.hibernate.reactive.panache.common.WithSession;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
-
-import java.time.LocalDateTime;
 
 @ApplicationScoped
 @WithSession
@@ -20,7 +19,7 @@ public class UserActionLogRepository implements PanacheRepositoryBase<UserAction
         entry.setModule(module);
         entry.setReferenceNo(referenceNo);
         entry.setAction(action);
-        entry.setLogDate(LocalDateTime.now());
+        entry.setLogDate(DateUtil.nowSGT());
         entry.setDeviceName(deviceInfo != null ? deviceInfo.getDeviceName() : null);
         entry.setDeviceIPAddress(deviceInfo != null ? deviceInfo.getDeviceIPAddress() : null);
         entry.setDeviceSerialNo(deviceInfo != null ? deviceInfo.getDeviceSerialNo() : null);

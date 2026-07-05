@@ -9,6 +9,7 @@ import com.aisolutions.jobtaskmanagement.repository.JobTaskRepository;
 import com.aisolutions.jobtaskmanagement.repository.StaffRepository;
 import com.aisolutions.jobtaskmanagement.repository.UserActionLogRepository;
 import com.aisolutions.jobtaskmanagement.util.DeviceInfo;
+import com.aisolutions.shared.util.DateUtil;
 
 import io.quarkus.cache.CacheKey;
 import io.quarkus.cache.CacheResult;
@@ -21,7 +22,6 @@ import jakarta.ws.rs.NotFoundException;
 import org.eclipse.microprofile.rest.client.inject.RestClient;
 import org.jboss.logging.Logger;
 
-import java.time.LocalDateTime;
 import java.time.Year;
 import java.util.List;
 import java.util.Map;
@@ -156,7 +156,7 @@ public class JobTaskService {
         task.setDueDate(req.getDueDate() != null ? req.getDueDate().atStartOfDay() : null);
         task.setEstimatedHours(req.getEstimatedHours());
         task.setEntryStaff(req.getEntryStaff() != null ? req.getEntryStaff() : "SYSTEM");
-        task.setEntryDate(LocalDateTime.now());
+        task.setEntryDate(DateUtil.nowSGT());
         // Temp code — will be replaced with sequential code after ID is generated
         task.setJobTaskId("JT-TEMP-" + (System.currentTimeMillis() % 99999));
 
@@ -196,7 +196,7 @@ public class JobTaskService {
                     task.setActualHours(req.getActualHours());
                     task.setRemarks(req.getRemarks());
                     task.setLastEditStaff(req.getLastEditStaff());
-                    task.setLastEdtiDate(LocalDateTime.now());
+                    task.setLastEdtiDate(DateUtil.nowSGT());
                     return enrichSingle(task);
                 });
     }
@@ -216,7 +216,7 @@ public class JobTaskService {
                             if (req.getStartedDate() != null) {
                                 task.setStartedDate(req.getStartedDate().atStartOfDay());
                             } else if (task.getStartedDate() == null) {
-                                task.setStartedDate(LocalDateTime.now());
+                                task.setStartedDate(DateUtil.nowSGT());
                             }
                         }
                         case "Completed" -> {
@@ -224,12 +224,12 @@ public class JobTaskService {
                             if (req.getStartedDate() != null && task.getStartedDate() == null) {
                                 task.setStartedDate(req.getStartedDate().atStartOfDay());
                             } else if (task.getStartedDate() == null) {
-                                task.setStartedDate(LocalDateTime.now());
+                                task.setStartedDate(DateUtil.nowSGT());
                             }
                             if (req.getCompletedDate() != null) {
                                 task.setCompletedDate(req.getCompletedDate().atStartOfDay());
                             } else {
-                                task.setCompletedDate(LocalDateTime.now());
+                                task.setCompletedDate(DateUtil.nowSGT());
                             }
                         }
                         case "Pending", "On Hold" -> {
@@ -244,7 +244,7 @@ public class JobTaskService {
 
                     task.setJobStatus(newStatus);
                     task.setLastEditStaff(req.getLastEditStaff());
-                    task.setLastEdtiDate(LocalDateTime.now());
+                    task.setLastEdtiDate(DateUtil.nowSGT());
                     return enrichSingle(task);
                 });
     }
@@ -259,7 +259,7 @@ public class JobTaskService {
                     String original = task.getAssigneeStaffId();
                     task.setAssigneeStaffId(req.getNewAssigneeStaffId());
                     task.setLastEditStaff(req.getLastEditStaff());
-                    task.setLastEdtiDate(LocalDateTime.now());
+                    task.setLastEdtiDate(DateUtil.nowSGT());
                     String remarks = "Reassigned from " + original + " to " + req.getNewAssigneeStaffId();
                     return logRepo.log(req.getLastEditStaff(), "JOBTASKS", task.getJobTaskId(), "REASSIGN", deviceInfo, remarks)
                             .flatMap(ignored -> enrichSingle(task));
@@ -278,7 +278,7 @@ public class JobTaskService {
                     String updated  = req.getNewDueDate() != null ? req.getNewDueDate().toString() : "none";
                     task.setDueDate(req.getNewDueDate() != null ? req.getNewDueDate().atStartOfDay() : null);
                     task.setLastEditStaff(req.getLastEditStaff());
-                    task.setLastEdtiDate(LocalDateTime.now());
+                    task.setLastEdtiDate(DateUtil.nowSGT());
                     String remarks = "Rescheduled from " + original + " to " + updated;
                     return logRepo.log(req.getLastEditStaff(), "JOBTASKS", task.getJobTaskId(), "RESCHEDULE", deviceInfo, remarks)
                             .flatMap(ignored -> enrichSingle(task));
@@ -294,7 +294,7 @@ public class JobTaskService {
                 .flatMap(task -> {
                     task.setProgressRemarks(req.getProgressRemarks());
                     task.setLastEditStaff(req.getLastEditStaff());
-                    task.setLastEdtiDate(LocalDateTime.now());
+                    task.setLastEdtiDate(DateUtil.nowSGT());
                     return enrichSingle(task);
                 });
     }
@@ -307,7 +307,7 @@ public class JobTaskService {
                 .onItem().ifNull().failWith(() -> new NotFoundException("Task " + id + " not found"))
                 .flatMap(task -> {
                     task.setJobStatus("Void");
-                    task.setLastEdtiDate(LocalDateTime.now());
+                    task.setLastEdtiDate(DateUtil.nowSGT());
                     return Uni.createFrom().voidItem();
                 });
     }
