@@ -77,6 +77,9 @@ public class JobTask extends PanacheEntityBase {
     @Column(name = "AttachmentPath", length = 500)
     private String attachmentPath;
 
+    @Column(name = "ReleaseId", length = 50)
+    private String releaseId;
+
     @Column(name = "EntryStaff", length = 25)
     private String entryStaff;
 

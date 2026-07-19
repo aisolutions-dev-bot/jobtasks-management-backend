@@ -49,4 +49,24 @@ public class JobTaskRepository implements PanacheRepositoryBase<JobTask, Long> {
     public Uni<JobTask> findActiveById(Long id) {
         return find("uniqId = ?1 AND jobStatus != 'Void'", id).firstResult();
     }
+
+    /**
+     * Job tasks eligible for a new release: matching one of the given statuses,
+     * not already linked to a release, and (if search provided) matching
+     * JobTaskId, TaskDescription, or assignee name.
+     */
+    public Uni<List<JobTask>> findReleasable(List<String> statuses, String search) {
+        String like = "%" + (search == null ? "" : search.trim()) + "%";
+        return list(
+            "jobStatus IN ?1 AND releaseId IS NULL AND (" +
+            "jobTaskId LIKE ?2 OR taskDescription LIKE ?2 OR " +
+            "EXISTS (SELECT 1 FROM Staff s WHERE s.staffId = assigneeStaffId AND s.name LIKE ?2)" +
+            ") ORDER BY dueDate ASC",
+            statuses, like);
+    }
+
+    /** Count of active job tasks already linked to a given release. */
+    public Uni<Long> countByReleaseId(String releaseId) {
+        return count("releaseId = ?1", releaseId);
+    }
 }
