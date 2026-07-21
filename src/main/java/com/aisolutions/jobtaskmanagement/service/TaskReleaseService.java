@@ -21,12 +21,15 @@ import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.ForbiddenException;
+import jakarta.ws.rs.NotFoundException;
 import org.eclipse.microprofile.rest.client.inject.RestClient;
 import org.jboss.logging.Logger;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -116,6 +119,135 @@ public class TaskReleaseService {
         });
     }
 
+    // ─── Detail ───────────────────────────────────────────────────────────────
+
+    @WithSession
+    public Uni<TaskReleaseDetailResponse> getDetail(String groupAuthority, Long id) {
+        return resolveAccess(groupAuthority).flatMap(accesses -> {
+            if (!hasAccess(accesses, ACCESS_VIEW)) {
+                return Uni.createFrom().failure(new ForbiddenException("Not authorized to view Task Releases"));
+            }
+            return releaseRepo.findById(id)
+                .onItem().ifNull().failWith(() -> new NotFoundException("Task Release " + id + " not found"))
+                .flatMap(this::buildDetail);
+        });
+    }
+
+    // ─── Update ───────────────────────────────────────────────────────────────
+
+    @WithTransaction
+    public Uni<TaskReleaseResponse> update(String groupAuthority, Long id, UpdateTaskReleaseRequest req) {
+        return resolveAccess(groupAuthority).flatMap(accesses -> {
+            if (!hasAccess(accesses, ACCESS_ADD)) {
+                return Uni.createFrom().failure(new ForbiddenException("Not authorized to edit a Task Release"));
+            }
+            return releaseRepo.findById(id)
+                .onItem().ifNull().failWith(() -> new NotFoundException("Task Release " + id + " not found"))
+                .flatMap(release -> doUpdate(release, req));
+        });
+    }
+
+    private Uni<TaskReleaseResponse> doUpdate(TaskRelease release, UpdateTaskReleaseRequest req) {
+        String oldReleaseId = release.getReleaseId();
+        String newReleaseId = req.getReleaseId();
+        boolean releaseIdChanged = newReleaseId != null && !newReleaseId.equals(oldReleaseId);
+
+        Uni<Void> uniquenessCheck = releaseIdChanged
+            ? releaseRepo.existsByReleaseIdExcluding(newReleaseId, release.getUniqId())
+                .flatMap(exists -> exists
+                    ? Uni.createFrom().<Void>failure(new BadRequestException("Release ID already exists"))
+                    : Uni.createFrom().voidItem())
+            : Uni.createFrom().voidItem();
+
+        return uniquenessCheck.flatMap(ignored -> {
+            release.setReleaseId(newReleaseId);
+            release.setReleaseDate(req.getReleaseDate() != null ? req.getReleaseDate().atStartOfDay() : release.getReleaseDate());
+            release.setReleaseVersion(req.getReleaseVersion());
+            release.setReleaseRemarks(req.getReleaseRemarks());
+            release.setLastEditStaff(req.getLastEditStaff());
+            release.setLastEditDate(DateUtil.nowSGT());
+
+            // ReleaseId is duplicated onto every linked JobTask row (JobTask.releaseId
+            // stores the release's *code*, not its uniqId) — keep them in sync.
+            Uni<Void> syncTasks = releaseIdChanged
+                ? taskRepo.findByReleaseId(oldReleaseId).map(tasks -> {
+                        tasks.forEach(t -> t.setReleaseId(newReleaseId));
+                        return null;
+                    })
+                : Uni.createFrom().voidItem();
+
+            return syncTasks
+                .flatMap(ignored2 -> taskRepo.countByReleaseId(release.getReleaseId()))
+                .map(count -> toResponse(release, count));
+        });
+    }
+
+    // ─── Task management ─────────────────────────────────────────────────────
+
+    @WithTransaction
+    public Uni<TaskReleaseDetailResponse> addJobTasks(String groupAuthority, Long id, AddJobTasksRequest req) {
+        return resolveAccess(groupAuthority).flatMap(accesses -> {
+            if (!hasAccess(accesses, ACCESS_ADD)) {
+                return Uni.createFrom().failure(new ForbiddenException("Not authorized to edit a Task Release"));
+            }
+            return releaseRepo.findById(id)
+                .onItem().ifNull().failWith(() -> new NotFoundException("Task Release " + id + " not found"))
+                .flatMap(release -> {
+                    List<Long> jobTaskIds = req.getJobTaskIds() != null ? req.getJobTaskIds() : List.of();
+                    return Multi.createFrom().iterable(jobTaskIds)
+                        .onItem().transformToUniAndConcatenate(taskId ->
+                            taskRepo.findById(taskId).flatMap(task -> {
+                                if (task == null || task.getReleaseId() != null) {
+                                    return Uni.createFrom().voidItem();
+                                }
+                                task.setReleaseId(release.getReleaseId());
+                                task.setLastEdtiDate(DateUtil.nowSGT());
+                                return Uni.createFrom().voidItem();
+                            }))
+                        .collect().asList()
+                        .flatMap(ignored -> buildDetail(release));
+                });
+        });
+    }
+
+    @WithTransaction
+    public Uni<Void> removeJobTask(String groupAuthority, Long id, Long jobTaskUniqId) {
+        return resolveAccess(groupAuthority).flatMap(accesses -> {
+            if (!hasAccess(accesses, ACCESS_ADD)) {
+                return Uni.createFrom().failure(new ForbiddenException("Not authorized to edit a Task Release"));
+            }
+            return releaseRepo.findById(id)
+                .onItem().ifNull().failWith(() -> new NotFoundException("Task Release " + id + " not found"))
+                .flatMap(release ->
+                    taskRepo.findById(jobTaskUniqId)
+                        .onItem().ifNull().failWith(() -> new NotFoundException("Job Task " + jobTaskUniqId + " not found"))
+                        .flatMap(task -> {
+                            if (!Objects.equals(task.getReleaseId(), release.getReleaseId())) {
+                                return Uni.createFrom().failure(new BadRequestException("Task is not part of this release"));
+                            }
+                            task.setReleaseId(null);
+                            task.setLastEdtiDate(DateUtil.nowSGT());
+                            return Uni.createFrom().voidItem();
+                        }));
+        });
+    }
+
+    // ─── Delete ───────────────────────────────────────────────────────────────
+
+    @WithTransaction
+    public Uni<Void> delete(String groupAuthority, Long id) {
+        return resolveAccess(groupAuthority).flatMap(accesses -> {
+            if (!hasAccess(accesses, ACCESS_ADD)) {
+                return Uni.createFrom().failure(new ForbiddenException("Not authorized to delete a Task Release"));
+            }
+            return releaseRepo.findById(id)
+                .onItem().ifNull().failWith(() -> new NotFoundException("Task Release " + id + " not found"))
+                .flatMap(release ->
+                    taskRepo.clearReleaseId(release.getReleaseId())
+                        .flatMap(ignored -> releaseRepo.delete(release)));
+        });
+    }
+
     private boolean hasAccess(List<GroupAuthorityAccessDTO> accesses, String code) {
         return accesses.stream()
                 .anyMatch(a -> code.equals(a.getAccessCode()) && Boolean.TRUE.equals(a.getAccessValue()));
@@ -161,6 +293,28 @@ public class TaskReleaseService {
         resp.setLastEditStaff(r.getLastEditStaff());
         resp.setLastEditDate(r.getLastEditDate());
         resp.setTaskCount(taskCount);
+        return resp;
+    }
+
+    private Uni<TaskReleaseDetailResponse> buildDetail(TaskRelease release) {
+        return taskRepo.findByReleaseId(release.getReleaseId())
+            .flatMap(this::enrichWithStaff)
+            .map(jobTasks -> toDetailResponse(release, (long) jobTasks.size(), jobTasks));
+    }
+
+    private TaskReleaseDetailResponse toDetailResponse(TaskRelease r, Long taskCount, List<JobTaskResponse> jobTasks) {
+        TaskReleaseDetailResponse resp = new TaskReleaseDetailResponse();
+        resp.setUniqId(r.getUniqId());
+        resp.setReleaseId(r.getReleaseId());
+        resp.setReleaseDate(r.getReleaseDate());
+        resp.setReleaseVersion(r.getReleaseVersion());
+        resp.setReleaseRemarks(r.getReleaseRemarks());
+        resp.setEntryStaff(r.getEntryStaff());
+        resp.setEntryDate(r.getEntryDate());
+        resp.setLastEditStaff(r.getLastEditStaff());
+        resp.setLastEditDate(r.getLastEditDate());
+        resp.setTaskCount(taskCount);
+        resp.setJobTasks(jobTasks);
         return resp;
     }
 

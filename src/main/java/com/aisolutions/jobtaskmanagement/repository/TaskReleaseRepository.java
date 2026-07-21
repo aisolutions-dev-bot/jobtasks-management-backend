@@ -20,4 +20,10 @@ public class TaskReleaseRepository implements PanacheRepositoryBase<TaskRelease,
     public Uni<Long> countByReleaseId(String releaseId) {
         return count("releaseId = ?1", releaseId);
     }
+
+    /** True if another release (different uniqId) already uses this releaseId. */
+    public Uni<Boolean> existsByReleaseIdExcluding(String releaseId, Long excludeUniqId) {
+        return count("releaseId = ?1 AND uniqId != ?2", releaseId, excludeUniqId)
+                .map(c -> c > 0);
+    }
 }

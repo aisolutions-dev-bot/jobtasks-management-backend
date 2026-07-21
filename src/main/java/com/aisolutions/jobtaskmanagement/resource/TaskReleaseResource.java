@@ -90,4 +90,113 @@ public class TaskReleaseResource {
                         return Response.serverError().entity(Map.of("error", msg)).build();
                 });
     }
+
+    /**
+     * GET /api/v1/task-releases/{id}
+     * Requires a2402.
+     */
+    @GET
+    @Path("/{id}")
+    public Uni<Response> getDetail(@PathParam("id") Long id) {
+        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
+        return service.getDetail(claims.groupAuthority(), id)
+                .onItem().transform(r -> Response.ok(r).build())
+                .onFailure(ForbiddenException.class).recoverWithItem(e ->
+                        Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", e.getMessage())).build())
+                .onFailure(NotFoundException.class).recoverWithItem(e ->
+                        Response.status(Response.Status.NOT_FOUND).entity(Map.of("error", e.getMessage())).build())
+                .onFailure().recoverWithItem(e -> {
+                        String msg = e.getMessage() != null ? e.getMessage()
+                            : (e.getCause() != null ? e.getCause().getMessage() : e.getClass().getSimpleName());
+                        return Response.serverError().entity(Map.of("error", msg)).build();
+                });
+    }
+
+    /**
+     * PUT /api/v1/task-releases/{id}
+     * Requires a2402.01.
+     */
+    @PUT
+    @Path("/{id}")
+    public Uni<Response> update(@PathParam("id") Long id, UpdateTaskReleaseRequest req) {
+        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
+        return service.update(claims.groupAuthority(), id, req)
+                .onItem().transform(r -> Response.ok(r).build())
+                .onFailure(ForbiddenException.class).recoverWithItem(e ->
+                        Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", e.getMessage())).build())
+                .onFailure(NotFoundException.class).recoverWithItem(e ->
+                        Response.status(Response.Status.NOT_FOUND).entity(Map.of("error", e.getMessage())).build())
+                .onFailure(BadRequestException.class).recoverWithItem(e ->
+                        Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", e.getMessage())).build())
+                .onFailure().recoverWithItem(e -> {
+                        String msg = e.getMessage() != null ? e.getMessage()
+                            : (e.getCause() != null ? e.getCause().getMessage() : e.getClass().getSimpleName());
+                        return Response.serverError().entity(Map.of("error", msg)).build();
+                });
+    }
+
+    /**
+     * POST /api/v1/task-releases/{id}/tasks
+     * Requires a2402.01.
+     */
+    @POST
+    @Path("/{id}/tasks")
+    public Uni<Response> addJobTasks(@PathParam("id") Long id, AddJobTasksRequest req) {
+        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
+        return service.addJobTasks(claims.groupAuthority(), id, req)
+                .onItem().transform(r -> Response.ok(r).build())
+                .onFailure(ForbiddenException.class).recoverWithItem(e ->
+                        Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", e.getMessage())).build())
+                .onFailure(NotFoundException.class).recoverWithItem(e ->
+                        Response.status(Response.Status.NOT_FOUND).entity(Map.of("error", e.getMessage())).build())
+                .onFailure().recoverWithItem(e -> {
+                        String msg = e.getMessage() != null ? e.getMessage()
+                            : (e.getCause() != null ? e.getCause().getMessage() : e.getClass().getSimpleName());
+                        return Response.serverError().entity(Map.of("error", msg)).build();
+                });
+    }
+
+    /**
+     * DELETE /api/v1/task-releases/{id}/tasks/{jobTaskUniqId}
+     * Requires a2402.01.
+     */
+    @DELETE
+    @Path("/{id}/tasks/{jobTaskUniqId}")
+    public Uni<Response> removeJobTask(@PathParam("id") Long id, @PathParam("jobTaskUniqId") Long jobTaskUniqId) {
+        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
+        return service.removeJobTask(claims.groupAuthority(), id, jobTaskUniqId)
+                .onItem().transform(v -> Response.noContent().build())
+                .onFailure(ForbiddenException.class).recoverWithItem(e ->
+                        Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", e.getMessage())).build())
+                .onFailure(NotFoundException.class).recoverWithItem(e ->
+                        Response.status(Response.Status.NOT_FOUND).entity(Map.of("error", e.getMessage())).build())
+                .onFailure(BadRequestException.class).recoverWithItem(e ->
+                        Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", e.getMessage())).build())
+                .onFailure().recoverWithItem(e -> {
+                        String msg = e.getMessage() != null ? e.getMessage()
+                            : (e.getCause() != null ? e.getCause().getMessage() : e.getClass().getSimpleName());
+                        return Response.serverError().entity(Map.of("error", msg)).build();
+                });
+    }
+
+    /**
+     * DELETE /api/v1/task-releases/{id}
+     * Requires a2402.01.
+     */
+    @DELETE
+    @Path("/{id}")
+    public Uni<Response> delete(@PathParam("id") Long id) {
+        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
+        return service.delete(claims.groupAuthority(), id)
+                .onItem().transform(v -> Response.noContent().build())
+                .onFailure(ForbiddenException.class).recoverWithItem(e ->
+                        Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", e.getMessage())).build())
+                .onFailure(NotFoundException.class).recoverWithItem(e ->
+                        Response.status(Response.Status.NOT_FOUND).entity(Map.of("error", e.getMessage())).build())
+                .onFailure().recoverWithItem(e -> {
+                        String msg = e.getMessage() != null ? e.getMessage()
+                            : (e.getCause() != null ? e.getCause().getMessage() : e.getClass().getSimpleName());
+                        return Response.serverError().entity(Map.of("error", msg)).build();
+                });
+    }
 }

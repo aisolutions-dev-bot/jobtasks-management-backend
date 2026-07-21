@@ -69,4 +69,14 @@ public class JobTaskRepository implements PanacheRepositoryBase<JobTask, Long> {
     public Uni<Long> countByReleaseId(String releaseId) {
         return count("releaseId = ?1", releaseId);
     }
+
+    /** All job tasks linked to a given release, for the release detail view. */
+    public Uni<List<JobTask>> findByReleaseId(String releaseId) {
+        return list("releaseId = ?1 ORDER BY dueDate ASC", releaseId);
+    }
+
+    /** Bulk-unlinks every job task from a release (used when a release is deleted). */
+    public Uni<Integer> clearReleaseId(String releaseId) {
+        return update("releaseId = null WHERE releaseId = ?1", releaseId);
+    }
 }

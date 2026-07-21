@@ -24,12 +24,42 @@ public class TaskReleaseDTO {
     }
 
     @Data
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class TaskReleaseDetailResponse {
+        private Long          uniqId;
+        private String        releaseId;
+        private LocalDateTime releaseDate;
+        private String        releaseVersion;
+        private String        releaseRemarks;
+        private String        entryStaff;
+        private LocalDateTime entryDate;
+        private String        lastEditStaff;
+        private LocalDateTime lastEditDate;
+        private Long          taskCount;
+        private List<JobTaskDTO.JobTaskResponse> jobTasks;
+    }
+
+    @Data
     public static class CreateTaskReleaseRequest {
         private String        releaseId;
         private java.time.LocalDate releaseDate;
         private String        releaseVersion;
         private String        releaseRemarks;
         private String        entryStaff;
+        private List<Long>    jobTaskIds;   // m24JobTasks.UniqID values to attach to this release
+    }
+
+    @Data
+    public static class UpdateTaskReleaseRequest {
+        private String        releaseId;
+        private java.time.LocalDate releaseDate;
+        private String        releaseVersion;
+        private String        releaseRemarks;
+        private String        lastEditStaff;
+    }
+
+    @Data
+    public static class AddJobTasksRequest {
         private List<Long>    jobTaskIds;   // m24JobTasks.UniqID values to attach to this release
     }
 }
