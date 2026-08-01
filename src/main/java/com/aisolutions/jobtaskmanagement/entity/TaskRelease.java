@@ -33,6 +33,9 @@ public class TaskRelease extends PanacheEntityBase {
     @Column(name = "ReleaseVersion", length = 50)
     private String releaseVersion;
 
+    @Column(name = "ReleaseType", length = 10)
+    private String releaseType;
+
     @Column(name = "ReleaseRemarks", length = 2000)
     private String releaseRemarks;
 

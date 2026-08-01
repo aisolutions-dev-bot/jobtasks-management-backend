@@ -1,13 +1,17 @@
 package com.aisolutions.jobtaskmanagement.client;
 
 import com.aisolutions.jobtaskmanagement.dto.SystemParameterDTO;
+import com.aisolutions.jobtaskmanagement.dto.VersionIncrementRequestDTO;
+import com.aisolutions.jobtaskmanagement.dto.VersionIncrementResponseDTO;
 import com.aisolutions.jobtaskmanagement.service.auth.ServiceAuthHeaderFactory;
 
 import io.smallrye.mutiny.Uni;
 import org.eclipse.microprofile.rest.client.annotation.RegisterClientHeaders;
 import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
 
+import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
@@ -34,4 +38,10 @@ public interface SystemParameterClient {
     @Path("/batch")
     @Produces(MediaType.APPLICATION_JSON)
     Uni<List<SystemParameterDTO>> getBatch(@QueryParam("parameters") List<String> parameters);
+
+    @POST
+    @Path("/version/increment")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    Uni<VersionIncrementResponseDTO> incrementVersion(VersionIncrementRequestDTO request);
 }

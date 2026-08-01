@@ -74,6 +74,25 @@ public class TaskReleaseResource {
     }
 
     /**
+     * GET /api/v1/task-releases/next-release-id
+     * Requires a2402.01. Preview only — the authoritative ID is assigned at creation time.
+     */
+    @GET
+    @Path("/next-release-id")
+    public Uni<Response> previewNextReleaseId() {
+        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
+        return service.previewNextReleaseId(claims.groupAuthority())
+                .onItem().transform(r -> Response.ok(r).build())
+                .onFailure(ForbiddenException.class).recoverWithItem(e ->
+                        Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", e.getMessage())).build())
+                .onFailure().recoverWithItem(e -> {
+                        String msg = e.getMessage() != null ? e.getMessage()
+                            : (e.getCause() != null ? e.getCause().getMessage() : e.getClass().getSimpleName());
+                        return Response.serverError().entity(Map.of("error", msg)).build();
+                });
+    }
+
+    /**
      * POST /api/v1/task-releases
      * Requires a2402.01.
      */

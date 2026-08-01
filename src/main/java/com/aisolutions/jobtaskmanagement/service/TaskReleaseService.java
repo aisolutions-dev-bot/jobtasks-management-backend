@@ -1,7 +1,9 @@
 package com.aisolutions.jobtaskmanagement.service;
 
 import com.aisolutions.jobtaskmanagement.client.GroupAuthorityAccessClient;
+import com.aisolutions.jobtaskmanagement.client.SystemParameterClient;
 import com.aisolutions.jobtaskmanagement.dto.GroupAuthorityAccessDTO;
+import com.aisolutions.jobtaskmanagement.dto.VersionIncrementRequestDTO;
 import com.aisolutions.jobtaskmanagement.dto.JobTaskDTO.JobTaskResponse;
 import com.aisolutions.jobtaskmanagement.dto.JobTaskDTO.StaffSummary;
 import com.aisolutions.jobtaskmanagement.dto.TaskReleaseDTO.*;
@@ -62,6 +64,10 @@ public class TaskReleaseService {
     @RestClient
     GroupAuthorityAccessClient accessClient;
 
+    @Inject
+    @RestClient
+    SystemParameterClient systemParameterClient;
+
     /** RBAC access codes per groupAuthority — rarely change. */
     @CacheResult(cacheName = "jobtasks-rbac-access")
     public Uni<List<GroupAuthorityAccessDTO>> getCachedAccess(@CacheKey String groupAuthority) {
@@ -119,6 +125,17 @@ public class TaskReleaseService {
         });
     }
 
+    /** Preview of the Release ID that would be assigned to the next release, for the Add form. */
+    @WithSession
+    public Uni<NextReleaseIdResponse> previewNextReleaseId(String groupAuthority) {
+        return resolveAccess(groupAuthority).flatMap(accesses -> {
+            if (!hasAccess(accesses, ACCESS_ADD)) {
+                return Uni.createFrom().failure(new ForbiddenException("Not authorized to add a Task Release"));
+            }
+            return generateNextReleaseId().map(NextReleaseIdResponse::new);
+        });
+    }
+
     // ─── Detail ───────────────────────────────────────────────────────────────
 
     @WithSession
@@ -162,7 +179,6 @@ public class TaskReleaseService {
         return uniquenessCheck.flatMap(ignored -> {
             release.setReleaseId(newReleaseId);
             release.setReleaseDate(req.getReleaseDate() != null ? req.getReleaseDate().atStartOfDay() : release.getReleaseDate());
-            release.setReleaseVersion(req.getReleaseVersion());
             release.setReleaseRemarks(req.getReleaseRemarks());
             release.setLastEditStaff(req.getLastEditStaff());
             release.setLastEditDate(DateUtil.nowSGT());
@@ -254,29 +270,77 @@ public class TaskReleaseService {
     }
 
     private Uni<TaskReleaseResponse> doCreate(CreateTaskReleaseRequest req) {
-        TaskRelease release = new TaskRelease();
-        release.setReleaseId(req.getReleaseId());
-        release.setReleaseDate(req.getReleaseDate() != null ? req.getReleaseDate().atStartOfDay() : DateUtil.nowSGT());
-        release.setReleaseVersion(req.getReleaseVersion());
-        release.setReleaseRemarks(req.getReleaseRemarks());
-        release.setEntryStaff(req.getEntryStaff() != null ? req.getEntryStaff() : "SYSTEM");
-        release.setEntryDate(DateUtil.nowSGT());
+        return systemParameterClient
+            .incrementVersion(new VersionIncrementRequestDTO(req.getReleaseType()))
+            .flatMap(versionResult -> {
+                TaskRelease release = new TaskRelease();
+                release.setReleaseDate(req.getReleaseDate() != null ? req.getReleaseDate().atStartOfDay() : DateUtil.nowSGT());
+                release.setReleaseVersion(versionResult.getVersionNumber());
+                release.setReleaseType(req.getReleaseType());
+                release.setReleaseRemarks(req.getReleaseRemarks());
+                release.setEntryStaff(req.getEntryStaff() != null ? req.getEntryStaff() : "SYSTEM");
+                release.setEntryDate(DateUtil.nowSGT());
 
-        List<Long> jobTaskIds = req.getJobTaskIds() != null ? req.getJobTaskIds() : List.of();
+                List<Long> jobTaskIds = req.getJobTaskIds() != null ? req.getJobTaskIds() : List.of();
 
-        return releaseRepo.persist(release)
-            .flatMap(savedRelease ->
-                Multi.createFrom().iterable(jobTaskIds)
-                    .onItem().transformToUniAndConcatenate(id ->
-                        taskRepo.findById(id).flatMap(task -> {
-                            if (task == null) return Uni.createFrom().voidItem();
-                            task.setReleaseId(savedRelease.getReleaseId());
-                            task.setLastEdtiDate(DateUtil.nowSGT());
-                            return Uni.createFrom().voidItem();
-                        }))
-                    .collect().asList()
-                    .flatMap(ignored -> taskRepo.countByReleaseId(savedRelease.getReleaseId()))
-                    .map(count -> toResponse(savedRelease, count)));
+                return persistWithGeneratedReleaseId(release, 1)
+                    .flatMap(savedRelease ->
+                        Multi.createFrom().iterable(jobTaskIds)
+                            .onItem().transformToUniAndConcatenate(id ->
+                                taskRepo.findById(id).flatMap(task -> {
+                                    if (task == null) return Uni.createFrom().voidItem();
+                                    task.setReleaseId(savedRelease.getReleaseId());
+                                    task.setLastEdtiDate(DateUtil.nowSGT());
+                                    return Uni.createFrom().voidItem();
+                                }))
+                            .collect().asList()
+                            .flatMap(ignored -> taskRepo.countByReleaseId(savedRelease.getReleaseId()))
+                            .map(count -> toResponse(savedRelease, count)));
+            });
+    }
+
+    private static final int MAX_RELEASE_ID_ATTEMPTS = 5;
+
+    /**
+     * Assigns a freshly generated Release ID and persists. Two concurrent creations can race
+     * between generating and persisting, so on a unique-constraint failure specifically on
+     * ReleaseId, regenerate and retry rather than failing the whole release creation.
+     */
+    private Uni<TaskRelease> persistWithGeneratedReleaseId(TaskRelease release, int attempt) {
+        if (attempt > MAX_RELEASE_ID_ATTEMPTS) {
+            return Uni.createFrom().failure(
+                new IllegalStateException("Unable to generate a unique Release ID, please try again"));
+        }
+        return generateNextReleaseId().flatMap(candidateId -> {
+            release.setReleaseId(candidateId);
+            return releaseRepo.persist(release)
+                .onFailure(this::isDuplicateReleaseId)
+                .recoverWithUni(e -> persistWithGeneratedReleaseId(release, attempt + 1));
+        });
+    }
+
+    private boolean isDuplicateReleaseId(Throwable t) {
+        if (t.getMessage() != null && t.getMessage().contains("ReleaseId")) {
+            return true;
+        }
+        Throwable cause = t.getCause();
+        return cause != null && cause.getMessage() != null && cause.getMessage().contains("ReleaseId");
+    }
+
+    private Uni<String> generateNextReleaseId() {
+        int year = DateUtil.nowSGT().getYear();
+        String prefix = "REL-" + year + "-";
+        return releaseRepo.findByReleaseIdPrefix(prefix).map(existing -> {
+            int max = existing.stream()
+                .map(TaskRelease::getReleaseId)
+                .filter(Objects::nonNull)
+                .map(id -> id.substring(prefix.length()))
+                .filter(suffix -> suffix.matches("\\d+"))
+                .mapToInt(Integer::parseInt)
+                .max()
+                .orElse(0);
+            return prefix + String.format("%03d", max + 1);
+        });
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -287,6 +351,7 @@ public class TaskReleaseService {
         resp.setReleaseId(r.getReleaseId());
         resp.setReleaseDate(r.getReleaseDate());
         resp.setReleaseVersion(r.getReleaseVersion());
+        resp.setReleaseType(r.getReleaseType());
         resp.setReleaseRemarks(r.getReleaseRemarks());
         resp.setEntryStaff(r.getEntryStaff());
         resp.setEntryDate(r.getEntryDate());
@@ -308,6 +373,7 @@ public class TaskReleaseService {
         resp.setReleaseId(r.getReleaseId());
         resp.setReleaseDate(r.getReleaseDate());
         resp.setReleaseVersion(r.getReleaseVersion());
+        resp.setReleaseType(r.getReleaseType());
         resp.setReleaseRemarks(r.getReleaseRemarks());
         resp.setEntryStaff(r.getEntryStaff());
         resp.setEntryDate(r.getEntryDate());
@@ -369,4 +435,5 @@ public class TaskReleaseService {
         ss.setAvatarColor(s.getAvatarColor());
         return ss;
     }
+
 }

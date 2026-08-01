@@ -15,6 +15,7 @@ public class TaskReleaseDTO {
         private String        releaseId;
         private LocalDateTime releaseDate;
         private String        releaseVersion;
+        private String        releaseType;
         private String        releaseRemarks;
         private String        entryStaff;
         private LocalDateTime entryDate;
@@ -30,6 +31,7 @@ public class TaskReleaseDTO {
         private String        releaseId;
         private LocalDateTime releaseDate;
         private String        releaseVersion;
+        private String        releaseType;
         private String        releaseRemarks;
         private String        entryStaff;
         private LocalDateTime entryDate;
@@ -41,19 +43,24 @@ public class TaskReleaseDTO {
 
     @Data
     public static class CreateTaskReleaseRequest {
-        private String        releaseId;
         private java.time.LocalDate releaseDate;
-        private String        releaseVersion;
+        private String        releaseType;
         private String        releaseRemarks;
         private String        entryStaff;
         private List<Long>    jobTaskIds;   // m24JobTasks.UniqID values to attach to this release
     }
 
     @Data
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class NextReleaseIdResponse {
+        private String releaseId;
+    }
+
+    @Data
     public static class UpdateTaskReleaseRequest {
         private String        releaseId;
         private java.time.LocalDate releaseDate;
-        private String        releaseVersion;
         private String        releaseRemarks;
         private String        lastEditStaff;
     }

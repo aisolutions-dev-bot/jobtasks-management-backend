@@ -26,4 +26,9 @@ public class TaskReleaseRepository implements PanacheRepositoryBase<TaskRelease,
         return count("releaseId = ?1 AND uniqId != ?2", releaseId, excludeUniqId)
                 .map(c -> c > 0);
     }
+
+    /** All releases whose releaseId starts with the given year prefix, e.g. "REL-2026-". */
+    public Uni<List<TaskRelease>> findByReleaseIdPrefix(String prefix) {
+        return list("releaseId LIKE ?1", prefix + "%");
+    }
 }

@@ -43,6 +43,15 @@ dependencies {
 
     // FTP client
     implementation("commons-net:commons-net:3.10.0")
+
+    // Test
+    testImplementation(
+        enforcedPlatform(
+            "${property("quarkusPlatformGroupId")}:${property("quarkusPlatformArtifactId")}:${property("quarkusPlatformVersion")}",
+        ),
+    )
+    testImplementation("io.quarkus:quarkus-junit5")
+    testImplementation("io.quarkus:quarkus-junit5-mockito")
 }
 
 group = "com.aisolutions"
