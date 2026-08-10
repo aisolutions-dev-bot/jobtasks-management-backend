@@ -39,7 +39,11 @@ dependencies {
     annotationProcessor("org.projectlombok:lombok:1.18.42")
 
     // Shared library
-    implementation("com.aisolutions:ai-solutions-java-shared:0.0.5")
+    implementation("com.aisolutions:ai-solutions-java-shared:0.0.6")
+
+    // Email transport used by the shared EmailService (task notification emails)
+    implementation("com.sun.mail:jakarta.mail:2.0.1")
+    implementation("jakarta.activation:jakarta.activation-api:2.1.3")
 
     // FTP client
     implementation("commons-net:commons-net:3.10.0")

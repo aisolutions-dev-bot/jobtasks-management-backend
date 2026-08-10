@@ -36,4 +36,10 @@ public class Staff extends PanacheEntityBase {
 
     @Column(name = "AvatarColor", length = 10)
     private String avatarColor;
+
+    @Column(name = "TelMobile", length = 255)
+    private String telMobile;
+
+    @Column(name = "EmailCompany", length = 255)
+    private String emailCompany;
 }

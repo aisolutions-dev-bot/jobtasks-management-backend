@@ -8,6 +8,7 @@ import com.aisolutions.jobtaskmanagement.entity.Staff;
 import com.aisolutions.jobtaskmanagement.repository.JobTaskRepository;
 import com.aisolutions.jobtaskmanagement.repository.StaffRepository;
 import com.aisolutions.jobtaskmanagement.repository.UserActionLogRepository;
+import com.aisolutions.jobtaskmanagement.service.jobtask.JobTaskNotificationService;
 import com.aisolutions.jobtaskmanagement.util.DeviceInfo;
 import com.aisolutions.shared.util.DateUtil;
 
@@ -22,6 +23,7 @@ import jakarta.ws.rs.NotFoundException;
 import org.eclipse.microprofile.rest.client.inject.RestClient;
 import org.jboss.logging.Logger;
 
+import java.time.LocalDate;
 import java.time.Year;
 import java.util.List;
 import java.util.Map;
@@ -55,6 +57,9 @@ public class JobTaskService {
 
     @Inject
     UserActionLogRepository logRepo;
+
+    @Inject
+    JobTaskNotificationService notificationService;
 
     @Inject
     @RestClient
@@ -142,9 +147,26 @@ public class JobTaskService {
 
     // ─── Create ───────────────────────────────────────────────────────────────
 
+    /**
+     * Creates a new job task and notifies the assignee once it's persisted.
+     *
+     * Delegates to {@link #buildNewJobTaskEntity} for entity construction and
+     * {@link #persistNewTaskAndNotifyAssignee} for the persist + notify chain.
+     */
     @WithTransaction
     public Uni<JobTaskResponse> create(CreateJobTaskRequest req) {
-        // Build the task entity first
+        JobTask task = buildNewJobTaskEntity(req);
+
+        // Sequential reactive chain — Vert.x MySQL client cannot handle parallel queries
+        // on the same connection. flatMap chains them strictly one-after-another.
+        return staffRepo.findByStaffId(req.getAssignorStaffId())
+                .flatMap(assignor ->
+                    staffRepo.findByStaffId(req.getAssigneeStaffId())
+                        .flatMap(assignee -> persistNewTaskAndNotifyAssignee(task, assignor, assignee)));
+    }
+
+    /** Maps a create request into a new, unsaved {@link JobTask} entity with a temporary code. */
+    private JobTask buildNewJobTaskEntity(CreateJobTaskRequest req) {
         JobTask task = new JobTask();
         task.setTaskTitle(req.getTaskTitle() != null ? req.getTaskTitle().trim() : "");
         task.setTaskType(req.getTaskType());
@@ -159,24 +181,29 @@ public class JobTaskService {
         task.setEntryDate(DateUtil.nowSGT());
         // Temp code — will be replaced with sequential code after ID is generated
         task.setJobTaskId("JT-TEMP-" + (System.currentTimeMillis() % 99999));
+        return task;
+    }
 
-        // Sequential reactive chain — Vert.x MySQL client cannot handle parallel queries
-        // on the same connection. flatMap chains them strictly one-after-another.
-        return staffRepo.findByStaffId(req.getAssignorStaffId())
-                .flatMap(assignor ->
-                    staffRepo.findByStaffId(req.getAssigneeStaffId())
-                        .flatMap(assignee ->
-                            taskRepo.persist(task)
-                                .flatMap(saved -> {
-                                    // Update JobTaskId now that we have the auto-generated UniqID.
-                                    // Use flatMap + persist to ensure the update is flushed to DB.
-                                    saved.setJobTaskId(String.format("JT-%d-%04d",
-                                        Year.now().getValue(), saved.getUniqId()));
-                                    return taskRepo.persist(saved)
-                                        .map(updated -> toResponse(updated, assignor, assignee));
-                                })
-                        )
-                );
+    /**
+     * Persists the task, assigns its final sequential code, fires the "task assigned"
+     * notification to the assignee, and maps the result to a response DTO.
+     */
+    private Uni<JobTaskResponse> persistNewTaskAndNotifyAssignee(JobTask task, Staff assignor, Staff assignee) {
+        return taskRepo.persist(task)
+                .flatMap(this::assignGeneratedJobTaskCode)
+                .invoke(updated -> notifyAssigneeOfNewTaskAssignment(updated, assignee, assignor))
+                .map(updated -> toResponse(updated, assignor, assignee));
+    }
+
+    /** Replaces the temporary code with the final sequential {@code JT-<year>-<uniqId>} code and flushes it. */
+    private Uni<JobTask> assignGeneratedJobTaskCode(JobTask saved) {
+        saved.setJobTaskId(String.format("JT-%d-%04d", Year.now().getValue(), saved.getUniqId()));
+        return taskRepo.persist(saved);
+    }
+
+    /** Fires the assignment notification to the assignee; never affects the caller's transaction. */
+    private void notifyAssigneeOfNewTaskAssignment(JobTask task, Staff assignee, Staff assignor) {
+        fireAndForgetNotification(notificationService.notifyTaskAssigned(task, assignee, assignor));
     }
 
     // ─── Update ───────────────────────────────────────────────────────────────
@@ -203,67 +230,113 @@ public class JobTaskService {
 
     // ─── Status update ────────────────────────────────────────────────────────
 
+    /**
+     * Updates a task's status, adjusting started/completed dates for the new status.
+     *
+     * Delegates to {@link #applyStatusFieldChanges} for field mutation and
+     * {@link #enrichAndNotifyOnCompletion} for staff enrichment + completion notification.
+     */
     @WithTransaction
     public Uni<JobTaskResponse> updateStatus(Long id, UpdateStatusRequest req) {
         return taskRepo.findActiveById(id)
                 .onItem().ifNull().failWith(() -> new NotFoundException("Task " + id + " not found"))
                 .flatMap(task -> {
-                    String newStatus = req.getJobStatus();
-
-                    switch (newStatus) {
-                        case "In Progress" -> {
-                            // Use user-supplied startedDate if provided, otherwise now
-                            if (req.getStartedDate() != null) {
-                                task.setStartedDate(req.getStartedDate().atStartOfDay());
-                            } else if (task.getStartedDate() == null) {
-                                task.setStartedDate(DateUtil.nowSGT());
-                            }
-                        }
-                        case "Completed" -> {
-                            // Use user-supplied dates if provided, otherwise now
-                            if (req.getStartedDate() != null && task.getStartedDate() == null) {
-                                task.setStartedDate(req.getStartedDate().atStartOfDay());
-                            } else if (task.getStartedDate() == null) {
-                                task.setStartedDate(DateUtil.nowSGT());
-                            }
-                            if (req.getCompletedDate() != null) {
-                                task.setCompletedDate(req.getCompletedDate().atStartOfDay());
-                            } else {
-                                task.setCompletedDate(DateUtil.nowSGT());
-                            }
-                        }
-                        case "Pending", "On Hold" -> {
-                            // Reset completion; keep startedDate intact
-                            task.setCompletedDate(null);
-                        }
-                        case "Closed" -> {
-                            // Closing a completed task — keep both dates as-is
-                            // (completedDate was already set when it moved to Completed)
-                        }
-                    }
-
-                    task.setJobStatus(newStatus);
-                    task.setLastEditStaff(req.getLastEditStaff());
-                    task.setLastEdtiDate(DateUtil.nowSGT());
-                    return enrichSingle(task);
+                    applyStatusFieldChanges(task, req);
+                    return enrichAndNotifyOnCompletion(task, req.getJobStatus());
                 });
+    }
+
+    /** Mutates started/completed dates and the status/audit fields for the requested status transition. */
+    private void applyStatusFieldChanges(JobTask task, UpdateStatusRequest req) {
+        switch (req.getJobStatus()) {
+            case "In Progress" -> markStartedIfNotAlready(task, req.getStartedDate());
+            case "Completed" -> markCompleted(task, req.getStartedDate(), req.getCompletedDate());
+            case "Pending", "On Hold" -> task.setCompletedDate(null); // reset completion; keep startedDate intact
+            case "Closed" -> { /* closing an already-completed task — keep both dates as-is */ }
+        }
+        task.setJobStatus(req.getJobStatus());
+        task.setLastEditStaff(req.getLastEditStaff());
+        task.setLastEdtiDate(DateUtil.nowSGT());
+    }
+
+    /** Sets startedDate from the request if provided, otherwise now — only if not already set. */
+    private void markStartedIfNotAlready(JobTask task, LocalDate requestedStartedDate) {
+        if (requestedStartedDate != null) {
+            task.setStartedDate(requestedStartedDate.atStartOfDay());
+        } else if (task.getStartedDate() == null) {
+            task.setStartedDate(DateUtil.nowSGT());
+        }
+    }
+
+    /** Sets startedDate (if missing) and completedDate for a transition into "Completed". */
+    private void markCompleted(JobTask task, LocalDate requestedStartedDate, LocalDate requestedCompletedDate) {
+        if (requestedStartedDate != null && task.getStartedDate() == null) {
+            task.setStartedDate(requestedStartedDate.atStartOfDay());
+        } else if (task.getStartedDate() == null) {
+            task.setStartedDate(DateUtil.nowSGT());
+        }
+        task.setCompletedDate(requestedCompletedDate != null ? requestedCompletedDate.atStartOfDay() : DateUtil.nowSGT());
+    }
+
+    /**
+     * Resolves assignor + assignee, fires the "task completed" notification to the assignor
+     * when the new status is "Completed", and maps the result to a response DTO.
+     */
+    private Uni<JobTaskResponse> enrichAndNotifyOnCompletion(JobTask task, String newStatus) {
+        return staffRepo.findByStaffId(task.getAssignorStaffId())
+                .flatMap(assignor ->
+                    staffRepo.findByStaffId(task.getAssigneeStaffId())
+                        .invoke(assignee -> notifyAssignorIfTaskJustCompleted(task, newStatus, assignor, assignee))
+                        .map(assignee -> toResponse(task, assignor, assignee)));
+    }
+
+    /** Fires the completion notification to the assignor only when the transition landed on "Completed". */
+    private void notifyAssignorIfTaskJustCompleted(JobTask task, String newStatus, Staff assignor, Staff assignee) {
+        if ("Completed".equals(newStatus)) {
+            fireAndForgetNotification(notificationService.notifyTaskCompleted(task, assignor, assignee));
+        }
     }
 
     // ─── Reassign (assignor only) ─────────────────────────────────────────────
 
+    /**
+     * Reassigns a task to a new assignee, logs the change, and notifies the new assignee.
+     *
+     * Delegates to {@link #applyReassignmentFieldChanges} for field mutation and
+     * {@link #logReassignmentAndNotifyNewAssignee} for the audit log + notification chain.
+     */
     @WithTransaction
     public Uni<JobTaskResponse> reassign(Long id, ReassignRequest req, DeviceInfo deviceInfo) {
         return taskRepo.findActiveById(id)
                 .onItem().ifNull().failWith(() -> new NotFoundException("Task " + id + " not found"))
                 .flatMap(task -> {
-                    String original = task.getAssigneeStaffId();
-                    task.setAssigneeStaffId(req.getNewAssigneeStaffId());
-                    task.setLastEditStaff(req.getLastEditStaff());
-                    task.setLastEdtiDate(DateUtil.nowSGT());
-                    String remarks = "Reassigned from " + original + " to " + req.getNewAssigneeStaffId();
-                    return logRepo.log(req.getLastEditStaff(), "JOBTASKS", task.getJobTaskId(), "REASSIGN", deviceInfo, remarks)
-                            .flatMap(ignored -> enrichSingle(task));
+                    String previousAssigneeStaffId = task.getAssigneeStaffId();
+                    applyReassignmentFieldChanges(task, req);
+                    return logReassignmentAndNotifyNewAssignee(task, req, previousAssigneeStaffId, deviceInfo);
                 });
+    }
+
+    /** Mutates the assignee and audit fields for a reassignment. */
+    private void applyReassignmentFieldChanges(JobTask task, ReassignRequest req) {
+        task.setAssigneeStaffId(req.getNewAssigneeStaffId());
+        task.setLastEditStaff(req.getLastEditStaff());
+        task.setLastEdtiDate(DateUtil.nowSGT());
+    }
+
+    /**
+     * Writes the REASSIGN audit log entry, then resolves assignor + new assignee and fires
+     * the "task assigned" notification to the new assignee.
+     */
+    private Uni<JobTaskResponse> logReassignmentAndNotifyNewAssignee(
+            JobTask task, ReassignRequest req, String previousAssigneeStaffId, DeviceInfo deviceInfo) {
+        String remarks = "Reassigned from " + previousAssigneeStaffId + " to " + req.getNewAssigneeStaffId();
+        return logRepo.log(req.getLastEditStaff(), "JOBTASKS", task.getJobTaskId(), "REASSIGN", deviceInfo, remarks)
+                .flatMap(ignored ->
+                    staffRepo.findByStaffId(task.getAssignorStaffId())
+                        .flatMap(assignor ->
+                            staffRepo.findByStaffId(task.getAssigneeStaffId())
+                                .invoke(newAssignee -> notifyAssigneeOfNewTaskAssignment(task, newAssignee, assignor))
+                                .map(newAssignee -> toResponse(task, assignor, newAssignee))));
     }
 
     // ─── Reschedule (assignor only) ───────────────────────────────────────────
@@ -313,6 +386,17 @@ public class JobTaskService {
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
+
+    /**
+     * Subscribes to a notification {@link Uni} without blocking the caller or propagating
+     * failures into the caller's reactive chain. Errors are logged only — a notification
+     * outage must never fail or delay the task create/update transaction.
+     */
+    private void fireAndForgetNotification(Uni<Void> notification) {
+        notification.subscribe().with(
+                ignored -> { },
+                err -> LOG.errorf(err, "[JobTaskService] Notification failed: %s", err.getMessage()));
+    }
 
     private boolean hasAccess(List<GroupAuthorityAccessDTO> accesses, String code) {
         return accesses.stream()
