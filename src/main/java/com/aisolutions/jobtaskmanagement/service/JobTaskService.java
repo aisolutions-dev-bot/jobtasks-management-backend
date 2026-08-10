@@ -88,7 +88,14 @@ public class JobTaskService {
     /** RBAC access codes per groupAuthority — rarely change. */
     @CacheResult(cacheName = "jobtasks-rbac-access")
     public Uni<List<GroupAuthorityAccessDTO>> getCachedAccess(@CacheKey String groupAuthority) {
-        return accessClient.getAccessByModule(groupAuthority, MODULE_ID)
+        return accessClient.getAccessByModule(groupAuthority, MODULE_ID);
+    }
+
+    private Uni<List<GroupAuthorityAccessDTO>> resolveAccess(String groupAuthority) {
+        if (groupAuthority == null || groupAuthority.isBlank()) {
+            return Uni.createFrom().item(List.of());
+        }
+        return getCachedAccess(groupAuthority)
                 .onFailure().recoverWithItem(e -> {
                     LOG.warnf("RBAC fetch failed: %s", e.getMessage());
                     return List.of();
@@ -100,10 +107,7 @@ public class JobTaskService {
     @WithSession
     public Uni<List<JobTaskResponse>> listWithRbac(String groupAuthority, String staffCode) {
 
-        Uni<List<GroupAuthorityAccessDTO>> accessUni =
-                (groupAuthority != null && !groupAuthority.isBlank())
-                        ? getCachedAccess(groupAuthority)
-                        : Uni.createFrom().item(List.of());
+        Uni<List<GroupAuthorityAccessDTO>> accessUni = resolveAccess(groupAuthority);
 
         // Current user's own record is looked up directly (not cached) so RBAC
         // department resolution reflects changes immediately.

@@ -71,17 +71,18 @@ public class TaskReleaseService {
     /** RBAC access codes per groupAuthority — rarely change. */
     @CacheResult(cacheName = "jobtasks-rbac-access")
     public Uni<List<GroupAuthorityAccessDTO>> getCachedAccess(@CacheKey String groupAuthority) {
-        return accessClient.getAccessByModule(groupAuthority, MODULE_ID)
+        return accessClient.getAccessByModule(groupAuthority, MODULE_ID);
+    }
+
+    private Uni<List<GroupAuthorityAccessDTO>> resolveAccess(String groupAuthority) {
+        if (groupAuthority == null || groupAuthority.isBlank()) {
+            return Uni.createFrom().item(List.of());
+        }
+        return getCachedAccess(groupAuthority)
                 .onFailure().recoverWithItem(e -> {
                     LOG.warnf("RBAC fetch failed: %s", e.getMessage());
                     return List.of();
                 });
-    }
-
-    private Uni<List<GroupAuthorityAccessDTO>> resolveAccess(String groupAuthority) {
-        return (groupAuthority != null && !groupAuthority.isBlank())
-                ? getCachedAccess(groupAuthority)
-                : Uni.createFrom().item(List.of());
     }
 
     // ─── List ─────────────────────────────────────────────────────────────────
