@@ -1,10 +1,11 @@
 package com.aisolutions.jobtaskmanagement.service.auth;
 
 import org.eclipse.microprofile.jwt.JsonWebToken;
-import org.jboss.logging.Logger;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.json.JsonArray;
+import jakarta.json.JsonString;
 
 import java.util.List;
 
@@ -29,7 +30,6 @@ public class JwtClaimsExtractor {
     private static final String STAFF_ID_CLAIM_NAME = "staffId";
     private static final String AUTHORITIES_CLAIM_NAME = "authorities";
     private static final String GROUP_AUTHORITY_PREFIX = "GROUP_";
-    private static final Logger LOG = Logger.getLogger(JwtClaimsExtractor.class);
 
     @Inject
     JsonWebToken jsonWebToken;
@@ -41,14 +41,6 @@ public class JwtClaimsExtractor {
      * {@link #extractGroupAuthorityFrom(JsonWebToken)}.
      */
     public JwtClaims extract() {
-        Object rawAuthorities = jsonWebToken.getClaim(AUTHORITIES_CLAIM_NAME);
-        LOG.infof("DIAG jwt class=%s name=%s claimNames=%s staffIdClaim=%s authoritiesClaim=%s authoritiesClass=%s",
-                jsonWebToken.getClass().getName(),
-                jsonWebToken.getName(),
-                jsonWebToken.getClaimNames(),
-                jsonWebToken.getClaim(STAFF_ID_CLAIM_NAME),
-                rawAuthorities,
-                rawAuthorities == null ? "null" : rawAuthorities.getClass().getName());
         return new JwtClaims(
                 extractStaffIdFrom(jsonWebToken),
                 extractGroupAuthorityFrom(jsonWebToken));
@@ -66,14 +58,35 @@ public class JwtClaimsExtractor {
     /**
      * Derives the caller's group authority from the token's
      * {@code authorities} claim, delegating to
+     * {@link #stringsIn(Object)} to normalize the claim's runtime shape and
      * {@link #findFirstGroupAuthorityIn(List)} for the actual selection.
      */
     private String extractGroupAuthorityFrom(JsonWebToken token) {
         Object authoritiesClaim = token.getClaim(AUTHORITIES_CLAIM_NAME);
-        if (!(authoritiesClaim instanceof List<?> authorities)) {
-            return "";
+        return findFirstGroupAuthorityIn(stringsIn(authoritiesClaim));
+    }
+
+    /**
+     * Normalizes the {@code authorities} claim into a plain string list.
+     * smallrye-jwt's CDI-produced {@link JsonWebToken} returns custom array
+     * claims as a JSON-P {@link JsonArray} (backed by Parsson) rather than a
+     * {@link List}, so both shapes must be handled — a raw {@code List} is
+     * kept as a fallback for other JsonWebToken implementations.
+     */
+    private List<String> stringsIn(Object claim) {
+        if (claim instanceof JsonArray jsonArray) {
+            return jsonArray.stream()
+                    .filter(value -> value instanceof JsonString)
+                    .map(value -> ((JsonString) value).getString())
+                    .toList();
         }
-        return findFirstGroupAuthorityIn(authorities);
+        if (claim instanceof List<?> list) {
+            return list.stream()
+                    .filter(value -> value instanceof String)
+                    .map(value -> (String) value)
+                    .toList();
+        }
+        return List.of();
     }
 
     /**
@@ -81,10 +94,8 @@ public class JwtClaimsExtractor {
      * and strips the prefix so the rest of the application sees the bare
      * group name (e.g. {@code GROUP_SUPERADMIN} -> {@code SUPERADMIN}).
      */
-    private String findFirstGroupAuthorityIn(List<?> authorities) {
+    private String findFirstGroupAuthorityIn(List<String> authorities) {
         return authorities.stream()
-                .filter(authority -> authority instanceof String)
-                .map(authority -> (String) authority)
                 .filter(authority -> authority.startsWith(GROUP_AUTHORITY_PREFIX))
                 .map(this::stripGroupPrefixFrom)
                 .findFirst()
