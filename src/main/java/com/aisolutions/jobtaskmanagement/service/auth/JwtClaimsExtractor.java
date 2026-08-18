@@ -1,6 +1,7 @@
 package com.aisolutions.jobtaskmanagement.service.auth;
 
 import org.eclipse.microprofile.jwt.JsonWebToken;
+import org.jboss.logging.Logger;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -28,6 +29,7 @@ public class JwtClaimsExtractor {
     private static final String STAFF_ID_CLAIM_NAME = "staffId";
     private static final String AUTHORITIES_CLAIM_NAME = "authorities";
     private static final String GROUP_AUTHORITY_PREFIX = "GROUP_";
+    private static final Logger LOG = Logger.getLogger(JwtClaimsExtractor.class);
 
     @Inject
     JsonWebToken jsonWebToken;
@@ -39,6 +41,14 @@ public class JwtClaimsExtractor {
      * {@link #extractGroupAuthorityFrom(JsonWebToken)}.
      */
     public JwtClaims extract() {
+        Object rawAuthorities = jsonWebToken.getClaim(AUTHORITIES_CLAIM_NAME);
+        LOG.infof("DIAG jwt class=%s name=%s claimNames=%s staffIdClaim=%s authoritiesClaim=%s authoritiesClass=%s",
+                jsonWebToken.getClass().getName(),
+                jsonWebToken.getName(),
+                jsonWebToken.getClaimNames(),
+                jsonWebToken.getClaim(STAFF_ID_CLAIM_NAME),
+                rawAuthorities,
+                rawAuthorities == null ? "null" : rawAuthorities.getClass().getName());
         return new JwtClaims(
                 extractStaffIdFrom(jsonWebToken),
                 extractGroupAuthorityFrom(jsonWebToken));
