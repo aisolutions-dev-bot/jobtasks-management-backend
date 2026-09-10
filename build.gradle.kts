@@ -46,7 +46,7 @@ dependencies {
 
     // Shared library — 0.1.1 adds the tenancy package (CompanyPoolManager,
     // CompanyDbLookupService, IdentityClaimsExtractor) used for multi-tenant DB routing.
-    implementation("com.aisolutions:ai-solutions-java-shared:0.2.0")
+    implementation("com.aisolutions:ai-solutions-java-shared:0.2.2")
 
     // Email transport used by the shared EmailService (task notification emails)
     implementation("com.sun.mail:jakarta.mail:2.0.1")
