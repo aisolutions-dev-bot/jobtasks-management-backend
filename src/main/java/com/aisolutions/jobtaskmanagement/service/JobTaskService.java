@@ -8,15 +8,17 @@ import com.aisolutions.jobtaskmanagement.entity.Staff;
 import com.aisolutions.jobtaskmanagement.repository.JobTaskRepository;
 import com.aisolutions.jobtaskmanagement.repository.StaffRepository;
 import com.aisolutions.jobtaskmanagement.repository.UserActionLogRepository;
+import com.aisolutions.jobtaskmanagement.service.auth.AccessControlService;
 import com.aisolutions.jobtaskmanagement.service.jobtask.JobTaskNotificationService;
 import com.aisolutions.jobtaskmanagement.util.DeviceInfo;
+import com.aisolutions.shared.tenancy.CompanyPoolManager;
 import com.aisolutions.shared.util.DateUtil;
 
 import io.quarkus.cache.CacheKey;
 import io.quarkus.cache.CacheResult;
-import io.quarkus.hibernate.reactive.panache.common.WithSession;
-import io.quarkus.hibernate.reactive.panache.common.WithTransaction;
 import io.smallrye.mutiny.Uni;
+import io.vertx.mutiny.sqlclient.Pool;
+import io.vertx.mutiny.sqlclient.SqlClient;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.NotFoundException;
@@ -62,27 +64,37 @@ public class JobTaskService {
     JobTaskNotificationService notificationService;
 
     @Inject
+    CompanyPoolManager companyPoolManager;
+
+    @Inject
+    AccessControlService accessControlService;
+
+    @Inject
     @RestClient
     GroupAuthorityAccessClient accessClient;
 
+    /** Resolves the company-routed pool for the current request. */
+    private Uni<Pool> currentPool() {
+        return companyPoolManager.poolFor(accessControlService.getCurrentCompanyId());
+    }
+
     // ─── Staff dropdown ───────────────────────────────────────────────────────
 
-    @WithSession
     public Uni<List<StaffSummary>> listStaff() {
-        return getCachedStaffDropdown()
+        return getCachedStaffDropdown(accessControlService.getCurrentCompanyId())
                 .map(list -> list.stream().map(this::toStaffSummary).collect(Collectors.toList()));
     }
 
     /** Staff directory for assignor/assignee enrichment — rarely changes. */
     @CacheResult(cacheName = "jobtasks-staff-list")
-    public Uni<List<Staff>> getCachedStaffList() {
-        return staffRepo.findAllOrdered();
+    public Uni<List<Staff>> getCachedStaffList(@CacheKey String companyId) {
+        return companyPoolManager.poolFor(companyId).flatMap(staffRepo::findAllOrdered);
     }
 
     /** Assignor/assignee dropdown — short TTL so new staff are assignable quickly. */
     @CacheResult(cacheName = "jobtasks-staff-dropdown")
-    public Uni<List<Staff>> getCachedStaffDropdown() {
-        return staffRepo.findAllOrdered();
+    public Uni<List<Staff>> getCachedStaffDropdown(@CacheKey String companyId) {
+        return companyPoolManager.poolFor(companyId).flatMap(staffRepo::findAllOrdered);
     }
 
     /** RBAC access codes per groupAuthority — rarely change. */
@@ -104,16 +116,18 @@ public class JobTaskService {
 
     // ─── List with RBAC ───────────────────────────────────────────────────────
 
-    @WithSession
     public Uni<List<JobTaskResponse>> listWithRbac(String groupAuthority, String staffCode) {
+        return currentPool().flatMap(pool -> listWithRbac(pool, groupAuthority, staffCode));
+    }
 
+    private Uni<List<JobTaskResponse>> listWithRbac(Pool pool, String groupAuthority, String staffCode) {
         Uni<List<GroupAuthorityAccessDTO>> accessUni = resolveAccess(groupAuthority);
 
         // Current user's own record is looked up directly (not cached) so RBAC
         // department resolution reflects changes immediately.
         Uni<Staff> staffUni =
                 (staffCode != null && !staffCode.isBlank())
-                        ? staffRepo.findByStaffId(staffCode)
+                        ? staffRepo.findByStaffId(pool, staffCode)
                                    .onFailure().recoverWithNull()
                         : Uni.createFrom().nullItem();
 
@@ -125,11 +139,11 @@ public class JobTaskService {
 
                     Uni<List<JobTask>> tasksUni;
                     if (viewAll) {
-                        tasksUni = taskRepo.findAllActive();
+                        tasksUni = taskRepo.findAllActive(pool);
                     } else if (viewDept && staff != null && staff.getDepartment() != null) {
-                        tasksUni = taskRepo.findByDepartment(staff.getDepartment());
+                        tasksUni = taskRepo.findByDepartment(pool, staff.getDepartment());
                     } else if (staff != null) {
-                        tasksUni = taskRepo.findByStaffId(staff.getStaffId());
+                        tasksUni = taskRepo.findByStaffId(pool, staff.getStaffId());
                     } else {
                         // Fail closed: unresolved staff identity must not see all tasks.
                         LOG.warnf("listWithRbac: could not resolve staff for staffCode='%s' — returning empty list", staffCode);
@@ -142,11 +156,11 @@ public class JobTaskService {
 
     // ─── Single task ──────────────────────────────────────────────────────────
 
-    @WithSession
     public Uni<JobTaskResponse> findById(Long id) {
-        return taskRepo.findActiveById(id)
+        return currentPool().flatMap(pool ->
+            taskRepo.findActiveById(pool, id)
                 .onItem().ifNull().failWith(() -> new NotFoundException("Task " + id + " not found"))
-                .flatMap(task -> enrichSingle(task));
+                .flatMap(task -> enrichSingle(pool, task)));
     }
 
     // ─── Create ───────────────────────────────────────────────────────────────
@@ -157,16 +171,16 @@ public class JobTaskService {
      * Delegates to {@link #buildNewJobTaskEntity} for entity construction and
      * {@link #persistNewTaskAndNotifyAssignee} for the persist + notify chain.
      */
-    @WithTransaction
     public Uni<JobTaskResponse> create(CreateJobTaskRequest req) {
         JobTask task = buildNewJobTaskEntity(req);
 
-        // Sequential reactive chain — Vert.x MySQL client cannot handle parallel queries
-        // on the same connection. flatMap chains them strictly one-after-another.
-        return staffRepo.findByStaffId(req.getAssignorStaffId())
+        return currentPool().flatMap(pool -> pool.withTransaction(client ->
+            // Sequential reactive chain — Vert.x MySQL client cannot handle parallel queries
+            // on the same connection. flatMap chains them strictly one-after-another.
+            staffRepo.findByStaffId(client, req.getAssignorStaffId())
                 .flatMap(assignor ->
-                    staffRepo.findByStaffId(req.getAssigneeStaffId())
-                        .flatMap(assignee -> persistNewTaskAndNotifyAssignee(task, assignor, assignee)));
+                    staffRepo.findByStaffId(client, req.getAssigneeStaffId())
+                        .flatMap(assignee -> persistNewTaskAndNotifyAssignee(client, task, assignor, assignee)))));
     }
 
     /** Maps a create request into a new, unsaved {@link JobTask} entity with a temporary code. */
@@ -192,17 +206,17 @@ public class JobTaskService {
      * Persists the task, assigns its final sequential code, fires the "task assigned"
      * notification to the assignee, and maps the result to a response DTO.
      */
-    private Uni<JobTaskResponse> persistNewTaskAndNotifyAssignee(JobTask task, Staff assignor, Staff assignee) {
-        return taskRepo.persist(task)
-                .flatMap(this::assignGeneratedJobTaskCode)
+    private Uni<JobTaskResponse> persistNewTaskAndNotifyAssignee(SqlClient client, JobTask task, Staff assignor, Staff assignee) {
+        return taskRepo.insert(client, task)
+                .flatMap(saved -> assignGeneratedJobTaskCode(client, saved))
                 .invoke(updated -> notifyAssigneeOfNewTaskAssignment(updated, assignee, assignor))
                 .map(updated -> toResponse(updated, assignor, assignee));
     }
 
     /** Replaces the temporary code with the final sequential {@code JT-<year>-<uniqId>} code and flushes it. */
-    private Uni<JobTask> assignGeneratedJobTaskCode(JobTask saved) {
+    private Uni<JobTask> assignGeneratedJobTaskCode(SqlClient client, JobTask saved) {
         saved.setJobTaskId(String.format("JT-%d-%04d", Year.now().getValue(), saved.getUniqId()));
-        return taskRepo.persist(saved);
+        return taskRepo.update(client, saved);
     }
 
     /** Fires the assignment notification to the assignee; never affects the caller's transaction. */
@@ -212,9 +226,9 @@ public class JobTaskService {
 
     // ─── Update ───────────────────────────────────────────────────────────────
 
-    @WithTransaction
     public Uni<JobTaskResponse> update(Long id, UpdateJobTaskRequest req) {
-        return taskRepo.findActiveById(id)
+        return currentPool().flatMap(pool -> pool.withTransaction(client ->
+            taskRepo.findActiveById(client, id)
                 .onItem().ifNull().failWith(() -> new NotFoundException("Task " + id + " not found"))
                 .flatMap(task -> {
                     task.setTaskTitle(req.getTaskTitle().trim());
@@ -228,8 +242,8 @@ public class JobTaskService {
                     task.setRemarks(req.getRemarks());
                     task.setLastEditStaff(req.getLastEditStaff());
                     task.setLastEdtiDate(DateUtil.nowSGT());
-                    return enrichSingle(task);
-                });
+                    return taskRepo.update(client, task).flatMap(saved -> enrichSingle(client, saved));
+                })));
     }
 
     // ─── Status update ────────────────────────────────────────────────────────
@@ -240,14 +254,15 @@ public class JobTaskService {
      * Delegates to {@link #applyStatusFieldChanges} for field mutation and
      * {@link #enrichAndNotifyOnCompletion} for staff enrichment + completion notification.
      */
-    @WithTransaction
     public Uni<JobTaskResponse> updateStatus(Long id, UpdateStatusRequest req) {
-        return taskRepo.findActiveById(id)
+        return currentPool().flatMap(pool -> pool.withTransaction(client ->
+            taskRepo.findActiveById(client, id)
                 .onItem().ifNull().failWith(() -> new NotFoundException("Task " + id + " not found"))
                 .flatMap(task -> {
                     applyStatusFieldChanges(task, req);
-                    return enrichAndNotifyOnCompletion(task, req.getJobStatus());
-                });
+                    return taskRepo.update(client, task)
+                        .flatMap(saved -> enrichAndNotifyOnCompletion(client, saved, req.getJobStatus()));
+                })));
     }
 
     /** Mutates started/completed dates and the status/audit fields for the requested status transition. */
@@ -286,10 +301,10 @@ public class JobTaskService {
      * Resolves assignor + assignee, fires the "task completed" notification to the assignor
      * when the new status is "Completed", and maps the result to a response DTO.
      */
-    private Uni<JobTaskResponse> enrichAndNotifyOnCompletion(JobTask task, String newStatus) {
-        return staffRepo.findByStaffId(task.getAssignorStaffId())
+    private Uni<JobTaskResponse> enrichAndNotifyOnCompletion(SqlClient client, JobTask task, String newStatus) {
+        return staffRepo.findByStaffId(client, task.getAssignorStaffId())
                 .flatMap(assignor ->
-                    staffRepo.findByStaffId(task.getAssigneeStaffId())
+                    staffRepo.findByStaffId(client, task.getAssigneeStaffId())
                         .invoke(assignee -> notifyAssignorIfTaskJustCompleted(task, newStatus, assignor, assignee))
                         .map(assignee -> toResponse(task, assignor, assignee)));
     }
@@ -309,15 +324,16 @@ public class JobTaskService {
      * Delegates to {@link #applyReassignmentFieldChanges} for field mutation and
      * {@link #logReassignmentAndNotifyNewAssignee} for the audit log + notification chain.
      */
-    @WithTransaction
     public Uni<JobTaskResponse> reassign(Long id, ReassignRequest req, DeviceInfo deviceInfo) {
-        return taskRepo.findActiveById(id)
+        return currentPool().flatMap(pool -> pool.withTransaction(client ->
+            taskRepo.findActiveById(client, id)
                 .onItem().ifNull().failWith(() -> new NotFoundException("Task " + id + " not found"))
                 .flatMap(task -> {
                     String previousAssigneeStaffId = task.getAssigneeStaffId();
                     applyReassignmentFieldChanges(task, req);
-                    return logReassignmentAndNotifyNewAssignee(task, req, previousAssigneeStaffId, deviceInfo);
-                });
+                    return taskRepo.update(client, task)
+                        .flatMap(saved -> logReassignmentAndNotifyNewAssignee(client, saved, req, previousAssigneeStaffId, deviceInfo));
+                })));
     }
 
     /** Mutates the assignee and audit fields for a reassignment. */
@@ -332,22 +348,22 @@ public class JobTaskService {
      * the "task assigned" notification to the new assignee.
      */
     private Uni<JobTaskResponse> logReassignmentAndNotifyNewAssignee(
-            JobTask task, ReassignRequest req, String previousAssigneeStaffId, DeviceInfo deviceInfo) {
+            SqlClient client, JobTask task, ReassignRequest req, String previousAssigneeStaffId, DeviceInfo deviceInfo) {
         String remarks = "Reassigned from " + previousAssigneeStaffId + " to " + req.getNewAssigneeStaffId();
-        return logRepo.log(req.getLastEditStaff(), "JOBTASKS", task.getJobTaskId(), "REASSIGN", deviceInfo, remarks)
+        return logRepo.log(client, req.getLastEditStaff(), "JOBTASKS", task.getJobTaskId(), "REASSIGN", deviceInfo, remarks)
                 .flatMap(ignored ->
-                    staffRepo.findByStaffId(task.getAssignorStaffId())
+                    staffRepo.findByStaffId(client, task.getAssignorStaffId())
                         .flatMap(assignor ->
-                            staffRepo.findByStaffId(task.getAssigneeStaffId())
+                            staffRepo.findByStaffId(client, task.getAssigneeStaffId())
                                 .invoke(newAssignee -> notifyAssigneeOfNewTaskAssignment(task, newAssignee, assignor))
                                 .map(newAssignee -> toResponse(task, assignor, newAssignee))));
     }
 
     // ─── Reschedule (assignor only) ───────────────────────────────────────────
 
-    @WithTransaction
     public Uni<JobTaskResponse> reschedule(Long id, RescheduleRequest req, DeviceInfo deviceInfo) {
-        return taskRepo.findActiveById(id)
+        return currentPool().flatMap(pool -> pool.withTransaction(client ->
+            taskRepo.findActiveById(client, id)
                 .onItem().ifNull().failWith(() -> new NotFoundException("Task " + id + " not found"))
                 .flatMap(task -> {
                     String original = task.getDueDate() != null
@@ -357,36 +373,37 @@ public class JobTaskService {
                     task.setLastEditStaff(req.getLastEditStaff());
                     task.setLastEdtiDate(DateUtil.nowSGT());
                     String remarks = "Rescheduled from " + original + " to " + updated;
-                    return logRepo.log(req.getLastEditStaff(), "JOBTASKS", task.getJobTaskId(), "RESCHEDULE", deviceInfo, remarks)
-                            .flatMap(ignored -> enrichSingle(task));
-                });
+                    return taskRepo.update(client, task)
+                            .flatMap(saved -> logRepo.log(client, req.getLastEditStaff(), "JOBTASKS", saved.getJobTaskId(), "RESCHEDULE", deviceInfo, remarks)
+                            .flatMap(ignored -> enrichSingle(client, saved)));
+                })));
     }
 
     // ─── Progress remarks (assignee only) ────────────────────────────────────
 
-    @WithTransaction
     public Uni<JobTaskResponse> updateProgressRemarks(Long id, UpdateProgressRemarksRequest req) {
-        return taskRepo.findActiveById(id)
+        return currentPool().flatMap(pool -> pool.withTransaction(client ->
+            taskRepo.findActiveById(client, id)
                 .onItem().ifNull().failWith(() -> new NotFoundException("Task " + id + " not found"))
                 .flatMap(task -> {
                     task.setProgressRemarks(req.getProgressRemarks());
                     task.setLastEditStaff(req.getLastEditStaff());
                     task.setLastEdtiDate(DateUtil.nowSGT());
-                    return enrichSingle(task);
-                });
+                    return taskRepo.update(client, task).flatMap(saved -> enrichSingle(client, saved));
+                })));
     }
 
     // ─── Soft delete ──────────────────────────────────────────────────────────
 
-    @WithTransaction
     public Uni<Void> delete(Long id) {
-        return taskRepo.findActiveById(id)
+        return currentPool().flatMap(pool -> pool.withTransaction(client ->
+            taskRepo.findActiveById(client, id)
                 .onItem().ifNull().failWith(() -> new NotFoundException("Task " + id + " not found"))
                 .flatMap(task -> {
                     task.setJobStatus("Void");
                     task.setLastEdtiDate(DateUtil.nowSGT());
-                    return Uni.createFrom().voidItem();
-                });
+                    return taskRepo.update(client, task).replaceWithVoid();
+                })));
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -410,7 +427,7 @@ public class JobTaskService {
     private Uni<List<JobTaskResponse>> enrichWithStaff(List<JobTask> tasks) {
         if (tasks.isEmpty()) return Uni.createFrom().item(List.of());
 
-        return getCachedStaffList().map(staffList -> {
+        return getCachedStaffList(accessControlService.getCurrentCompanyId()).map(staffList -> {
             Map<String, Staff> staffMap = staffList.stream()
                     .collect(Collectors.toMap(Staff::getStaffId, Function.identity()));
             return tasks.stream()
@@ -421,10 +438,10 @@ public class JobTaskService {
         });
     }
 
-    private Uni<JobTaskResponse> enrichSingle(JobTask task) {
-        return staffRepo.findByStaffId(task.getAssignorStaffId())
+    private Uni<JobTaskResponse> enrichSingle(SqlClient client, JobTask task) {
+        return staffRepo.findByStaffId(client, task.getAssignorStaffId())
                 .flatMap(assignor ->
-                    staffRepo.findByStaffId(task.getAssigneeStaffId())
+                    staffRepo.findByStaffId(client, task.getAssigneeStaffId())
                         .map(assignee -> toResponse(task, assignor, assignee)));
     }
 

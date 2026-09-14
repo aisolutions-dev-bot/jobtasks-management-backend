@@ -4,9 +4,11 @@ import com.aisolutions.jobtaskmanagement.dto.AttachmentDTO;
 import com.aisolutions.jobtaskmanagement.entity.Attachment;
 import com.aisolutions.jobtaskmanagement.repository.AttachmentRepository;
 import com.aisolutions.jobtaskmanagement.service.SystemParameterService;
+import com.aisolutions.jobtaskmanagement.service.auth.AccessControlService;
+import com.aisolutions.shared.tenancy.CompanyPoolManager;
 
-import io.quarkus.hibernate.reactive.panache.Panache;
 import io.smallrye.mutiny.Uni;
+import io.vertx.mutiny.sqlclient.Pool;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -16,7 +18,7 @@ import java.util.List;
 /**
  * Attachment service for the JobTasks module.
  *
- * FTP credentials and paths are loaded from m07SystemParameter at runtime via
+ * FTP credentials and paths are loaded from m07SystemParameters at runtime via
  * {@link SystemParameterService}. The required parameters are:
  *   ATTACHMENT-MODE          → must be "FTP"
  *   ATTACHMENT-MAIN-URL      → e.g. /test.borneochemicalintl.com
@@ -48,10 +50,21 @@ public class AttachmentService {
     @Inject
     SystemParameterService systemParameterService;
 
+    @Inject
+    CompanyPoolManager companyPoolManager;
+
+    @Inject
+    AccessControlService accessControlService;
+
+    /** Resolves the company-routed pool for the current request. */
+    private Uni<Pool> currentPool() {
+        return companyPoolManager.poolFor(accessControlService.getCurrentCompanyId());
+    }
+
     // ── GET ───────────────────────────────────────────────────────────────────
 
     public Uni<List<AttachmentDTO>> getAttachments(String jobTaskId) {
-        return attachmentRepository.findByModuleAndReference("JOBTASKS", jobTaskId);
+        return currentPool().flatMap(pool -> attachmentRepository.findByModuleAndReference(pool, "JOBTASKS", jobTaskId));
     }
 
     // ── DOWNLOAD ──────────────────────────────────────────────────────────────
@@ -63,11 +76,10 @@ public class AttachmentService {
      * Fetch attachment metadata and file bytes in a single flow.
      * Uses cached FTP config — no extra DB query for credentials.
      */
-    @SuppressWarnings("null")
     public Uni<DownloadResult> downloadAttachment(Long uniqId) {
         return systemParameterService.loadFtpConfig()
-            .flatMap(config ->
-                attachmentRepository.findByIdMeta(uniqId).flatMap(a -> {
+            .flatMap(config -> currentPool().flatMap(pool ->
+                attachmentRepository.findByIdMeta(pool, uniqId).flatMap(a -> {
                     if (a == null) {
                         return Uni.createFrom().failure(
                             new RuntimeException("Attachment not found: " + uniqId));
@@ -89,7 +101,7 @@ public class AttachmentService {
                     return Uni.createFrom().item(
                         new DownloadResult(data, a.getOriginalName(), a.getContentType()));
                 })
-            );
+            ));
     }
 
     // ── UPLOAD ────────────────────────────────────────────────────────────────
@@ -99,9 +111,9 @@ public class AttachmentService {
      *
      * Flow:
      *   1. Validate file (extension, size)
-     *   2. Load FtpConfig from m07SystemParameter (checks ATTACHMENT-MODE = FTP)
+     *   2. Load FtpConfig from m07SystemParameters (checks ATTACHMENT-MODE = FTP)
      *   3. Upload bytes to FTP
-     *   4. Persist metadata to m10Attachments in a DB transaction
+     *   4. Persist metadata to m10Attachments
      */
     public Uni<AttachmentDTO> uploadFile(
             String jobTaskId,
@@ -121,10 +133,11 @@ public class AttachmentService {
                 LOG.infof("[Attachment] Uploading file for task: %s", jobTaskId);
 
                 // Step 1: upload to FTP (blocking I/O on worker thread)
-                // Step 2: persist metadata (DB transaction), only after FTP succeeds
+                // Step 2: persist metadata, only after FTP succeeds
                 return ftpStorageService.uploadFile(fileData, directoryPath, originalName, config)
-                    .flatMap(remotePath -> Panache.withTransaction(() ->
+                    .flatMap(remotePath -> currentPool().flatMap(pool ->
                         attachmentRepository.persistAttachmentMeta(
+                            pool,
                             remotePath,
                             "JOBTASKS",
                             jobTaskId,
@@ -144,15 +157,15 @@ public class AttachmentService {
      * Delete an attachment.
      *
      * Flow:
-     *   1. Load FtpConfig from m07SystemParameter
+     *   1. Load FtpConfig from m07SystemParameters
      *   2. Retrieve attachment metadata
      *   3. Delete from FTP (if FTP storage type)
-     *   4. Delete metadata from DB in a transaction
+     *   4. Delete metadata from DB
      */
     public Uni<Boolean> deleteAttachment(Long uniqId) {
         return systemParameterService.loadFtpConfig()
-            .flatMap(config ->
-                attachmentRepository.findByIdMeta(uniqId).flatMap(a -> {
+            .flatMap(config -> currentPool().flatMap(pool ->
+                attachmentRepository.findByIdMeta(pool, uniqId).flatMap(a -> {
                     if (a == null) return Uni.createFrom().item(false);
 
                     Uni<Boolean> ftpDelete =
@@ -160,13 +173,9 @@ public class AttachmentService {
                             ? ftpStorageService.deleteFile(a.getFilePath(), config)
                             : Uni.createFrom().item(true);
 
-                    return ftpDelete.flatMap(ignored ->
-                        Panache.withTransaction(() ->
-                            attachmentRepository.deleteFromDb(uniqId)
-                        )
-                    );
+                    return ftpDelete.flatMap(ignored -> attachmentRepository.deleteFromDb(pool, uniqId));
                 })
-            );
+            ));
     }
 
     // ── HELPERS ───────────────────────────────────────────────────────────────

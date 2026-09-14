@@ -13,14 +13,16 @@ import com.aisolutions.jobtaskmanagement.entity.TaskRelease;
 import com.aisolutions.jobtaskmanagement.repository.JobTaskRepository;
 import com.aisolutions.jobtaskmanagement.repository.StaffRepository;
 import com.aisolutions.jobtaskmanagement.repository.TaskReleaseRepository;
+import com.aisolutions.jobtaskmanagement.service.auth.AccessControlService;
+import com.aisolutions.shared.tenancy.CompanyPoolManager;
 import com.aisolutions.shared.util.DateUtil;
 
 import io.quarkus.cache.CacheKey;
 import io.quarkus.cache.CacheResult;
-import io.quarkus.hibernate.reactive.panache.common.WithSession;
-import io.quarkus.hibernate.reactive.panache.common.WithTransaction;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
+import io.vertx.mutiny.sqlclient.Pool;
+import io.vertx.mutiny.sqlclient.SqlClient;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
@@ -61,12 +63,23 @@ public class TaskReleaseService {
     StaffRepository staffRepo;
 
     @Inject
+    CompanyPoolManager companyPoolManager;
+
+    @Inject
+    AccessControlService accessControlService;
+
+    @Inject
     @RestClient
     GroupAuthorityAccessClient accessClient;
 
     @Inject
     @RestClient
     SystemParameterClient systemParameterClient;
+
+    /** Resolves the company-routed pool for the current request. */
+    private Uni<Pool> currentPool() {
+        return companyPoolManager.poolFor(accessControlService.getCurrentCompanyId());
+    }
 
     /** RBAC access codes per groupAuthority — rarely change. */
     @CacheResult(cacheName = "jobtasks-rbac-access")
@@ -87,91 +100,86 @@ public class TaskReleaseService {
 
     // ─── List ─────────────────────────────────────────────────────────────────
 
-    @WithSession
     public Uni<List<TaskReleaseResponse>> listReleases(String groupAuthority) {
-        return resolveAccess(groupAuthority).flatMap(accesses -> {
+        return currentPool().flatMap(pool -> resolveAccess(groupAuthority).flatMap(accesses -> {
             if (!hasAccess(accesses, ACCESS_VIEW)) {
                 return Uni.createFrom().failure(new ForbiddenException("Not authorized to view Task Releases"));
             }
-            return releaseRepo.findAllOrdered()
+            return releaseRepo.findAllOrdered(pool)
                 .flatMap(releases ->
                     Multi.createFrom().iterable(releases)
                         .onItem().transformToUniAndConcatenate(r ->
-                            taskRepo.countByReleaseId(r.getReleaseId()).map(count -> toResponse(r, count)))
+                            taskRepo.countByReleaseId(pool, r.getReleaseId()).map(count -> toResponse(r, count)))
                         .collect().asList());
-        });
+        }));
     }
 
     // ─── Releasable job tasks ────────────────────────────────────────────────
 
-    @WithSession
     public Uni<List<JobTaskResponse>> getReleasableJobTasks(String groupAuthority, List<String> statuses, String search) {
-        return resolveAccess(groupAuthority).flatMap(accesses -> {
+        return currentPool().flatMap(pool -> resolveAccess(groupAuthority).flatMap(accesses -> {
             if (!hasAccess(accesses, ACCESS_VIEW)) {
                 return Uni.createFrom().failure(new ForbiddenException("Not authorized to view Task Releases"));
             }
-            return taskRepo.findReleasable(statuses, search).flatMap(this::enrichWithStaff);
-        });
+            return taskRepo.findReleasable(pool, statuses, search).flatMap(tasks -> enrichWithStaff(pool, tasks));
+        }));
     }
 
     // ─── Create ───────────────────────────────────────────────────────────────
 
-    @WithTransaction
     public Uni<TaskReleaseResponse> create(String groupAuthority, CreateTaskReleaseRequest req) {
-        return resolveAccess(groupAuthority).flatMap(accesses -> {
+        return currentPool().flatMap(pool -> resolveAccess(groupAuthority).flatMap(accesses -> {
             if (!hasAccess(accesses, ACCESS_ADD)) {
                 return Uni.createFrom().failure(new ForbiddenException("Not authorized to add a Task Release"));
             }
-            return doCreate(req);
-        });
+            return pool.withTransaction(client -> doCreate(client, req));
+        }));
     }
 
     /** Preview of the Release ID that would be assigned to the next release, for the Add form. */
-    @WithSession
     public Uni<NextReleaseIdResponse> previewNextReleaseId(String groupAuthority) {
-        return resolveAccess(groupAuthority).flatMap(accesses -> {
+        return currentPool().flatMap(pool -> resolveAccess(groupAuthority).flatMap(accesses -> {
             if (!hasAccess(accesses, ACCESS_ADD)) {
                 return Uni.createFrom().failure(new ForbiddenException("Not authorized to add a Task Release"));
             }
-            return generateNextReleaseId().map(NextReleaseIdResponse::new);
-        });
+            return generateNextReleaseId(pool).map(NextReleaseIdResponse::new);
+        }));
     }
 
     // ─── Detail ───────────────────────────────────────────────────────────────
 
-    @WithSession
     public Uni<TaskReleaseDetailResponse> getDetail(String groupAuthority, Long id) {
-        return resolveAccess(groupAuthority).flatMap(accesses -> {
+        return currentPool().flatMap(pool -> resolveAccess(groupAuthority).flatMap(accesses -> {
             if (!hasAccess(accesses, ACCESS_VIEW)) {
                 return Uni.createFrom().failure(new ForbiddenException("Not authorized to view Task Releases"));
             }
-            return releaseRepo.findById(id)
+            return releaseRepo.findById(pool, id)
                 .onItem().ifNull().failWith(() -> new NotFoundException("Task Release " + id + " not found"))
-                .flatMap(this::buildDetail);
-        });
+                .flatMap(release -> buildDetail(pool, release));
+        }));
     }
 
     // ─── Update ───────────────────────────────────────────────────────────────
 
-    @WithTransaction
     public Uni<TaskReleaseResponse> update(String groupAuthority, Long id, UpdateTaskReleaseRequest req) {
-        return resolveAccess(groupAuthority).flatMap(accesses -> {
+        return currentPool().flatMap(pool -> resolveAccess(groupAuthority).flatMap(accesses -> {
             if (!hasAccess(accesses, ACCESS_ADD)) {
                 return Uni.createFrom().failure(new ForbiddenException("Not authorized to edit a Task Release"));
             }
-            return releaseRepo.findById(id)
-                .onItem().ifNull().failWith(() -> new NotFoundException("Task Release " + id + " not found"))
-                .flatMap(release -> doUpdate(release, req));
-        });
+            return pool.withTransaction(client ->
+                releaseRepo.findById(client, id)
+                    .onItem().ifNull().failWith(() -> new NotFoundException("Task Release " + id + " not found"))
+                    .flatMap(release -> doUpdate(client, release, req)));
+        }));
     }
 
-    private Uni<TaskReleaseResponse> doUpdate(TaskRelease release, UpdateTaskReleaseRequest req) {
+    private Uni<TaskReleaseResponse> doUpdate(SqlClient client, TaskRelease release, UpdateTaskReleaseRequest req) {
         String oldReleaseId = release.getReleaseId();
         String newReleaseId = req.getReleaseId();
         boolean releaseIdChanged = newReleaseId != null && !newReleaseId.equals(oldReleaseId);
 
         Uni<Void> uniquenessCheck = releaseIdChanged
-            ? releaseRepo.existsByReleaseIdExcluding(newReleaseId, release.getUniqId())
+            ? releaseRepo.existsByReleaseIdExcluding(client, newReleaseId, release.getUniqId())
                 .flatMap(exists -> exists
                     ? Uni.createFrom().<Void>failure(new BadRequestException("Release ID already exists"))
                     : Uni.createFrom().voidItem())
@@ -187,82 +195,86 @@ public class TaskReleaseService {
             // ReleaseId is duplicated onto every linked JobTask row (JobTask.releaseId
             // stores the release's *code*, not its uniqId) — keep them in sync.
             Uni<Void> syncTasks = releaseIdChanged
-                ? taskRepo.findByReleaseId(oldReleaseId).map(tasks -> {
-                        tasks.forEach(t -> t.setReleaseId(newReleaseId));
-                        return null;
-                    })
+                ? taskRepo.findByReleaseId(client, oldReleaseId).flatMap(tasks ->
+                        Multi.createFrom().iterable(tasks)
+                            .onItem().transformToUniAndConcatenate(t -> {
+                                t.setReleaseId(newReleaseId);
+                                return taskRepo.update(client, t);
+                            })
+                            .collect().asList().replaceWithVoid())
                 : Uni.createFrom().voidItem();
 
             return syncTasks
-                .flatMap(ignored2 -> taskRepo.countByReleaseId(release.getReleaseId()))
-                .map(count -> toResponse(release, count));
+                .flatMap(ignored2 -> releaseRepo.update(client, release))
+                .flatMap(saved -> taskRepo.countByReleaseId(client, saved.getReleaseId())
+                    .map(count -> toResponse(saved, count)));
         });
     }
 
     // ─── Task management ─────────────────────────────────────────────────────
 
-    @WithTransaction
     public Uni<TaskReleaseDetailResponse> addJobTasks(String groupAuthority, Long id, AddJobTasksRequest req) {
-        return resolveAccess(groupAuthority).flatMap(accesses -> {
+        return currentPool().flatMap(pool -> resolveAccess(groupAuthority).flatMap(accesses -> {
             if (!hasAccess(accesses, ACCESS_ADD)) {
                 return Uni.createFrom().failure(new ForbiddenException("Not authorized to edit a Task Release"));
             }
-            return releaseRepo.findById(id)
-                .onItem().ifNull().failWith(() -> new NotFoundException("Task Release " + id + " not found"))
-                .flatMap(release -> {
-                    List<Long> jobTaskIds = req.getJobTaskIds() != null ? req.getJobTaskIds() : List.of();
-                    return Multi.createFrom().iterable(jobTaskIds)
-                        .onItem().transformToUniAndConcatenate(taskId ->
-                            taskRepo.findById(taskId).flatMap(task -> {
-                                if (task == null || task.getReleaseId() != null) {
-                                    return Uni.createFrom().voidItem();
-                                }
-                                task.setReleaseId(release.getReleaseId());
-                                task.setLastEdtiDate(DateUtil.nowSGT());
-                                return Uni.createFrom().voidItem();
-                            }))
-                        .collect().asList()
-                        .flatMap(ignored -> buildDetail(release));
-                });
-        });
+            return pool.withTransaction(client ->
+                releaseRepo.findById(client, id)
+                    .onItem().ifNull().failWith(() -> new NotFoundException("Task Release " + id + " not found"))
+                    .flatMap(release -> {
+                        List<Long> jobTaskIds = req.getJobTaskIds() != null ? req.getJobTaskIds() : List.of();
+                        return Multi.createFrom().iterable(jobTaskIds)
+                            .onItem().transformToUniAndConcatenate(taskId ->
+                                taskRepo.findById(client, taskId).flatMap(task -> {
+                                    if (task == null || task.getReleaseId() != null) {
+                                        return Uni.createFrom().voidItem();
+                                    }
+                                    task.setReleaseId(release.getReleaseId());
+                                    task.setLastEdtiDate(DateUtil.nowSGT());
+                                    return taskRepo.update(client, task).replaceWithVoid();
+                                }))
+                            .collect().asList()
+                            .flatMap(ignored -> buildDetail(client, release));
+                    }));
+        }));
     }
 
-    @WithTransaction
     public Uni<Void> removeJobTask(String groupAuthority, Long id, Long jobTaskUniqId) {
-        return resolveAccess(groupAuthority).flatMap(accesses -> {
+        return currentPool().flatMap(pool -> resolveAccess(groupAuthority).flatMap(accesses -> {
             if (!hasAccess(accesses, ACCESS_ADD)) {
                 return Uni.createFrom().failure(new ForbiddenException("Not authorized to edit a Task Release"));
             }
-            return releaseRepo.findById(id)
-                .onItem().ifNull().failWith(() -> new NotFoundException("Task Release " + id + " not found"))
-                .flatMap(release ->
-                    taskRepo.findById(jobTaskUniqId)
-                        .onItem().ifNull().failWith(() -> new NotFoundException("Job Task " + jobTaskUniqId + " not found"))
-                        .flatMap(task -> {
-                            if (!Objects.equals(task.getReleaseId(), release.getReleaseId())) {
-                                return Uni.createFrom().failure(new BadRequestException("Task is not part of this release"));
-                            }
-                            task.setReleaseId(null);
-                            task.setLastEdtiDate(DateUtil.nowSGT());
-                            return Uni.createFrom().voidItem();
-                        }));
-        });
+            return pool.withTransaction(client ->
+                releaseRepo.findById(client, id)
+                    .onItem().ifNull().failWith(() -> new NotFoundException("Task Release " + id + " not found"))
+                    .flatMap(release ->
+                        taskRepo.findById(client, jobTaskUniqId)
+                            .onItem().ifNull().failWith(() -> new NotFoundException("Job Task " + jobTaskUniqId + " not found"))
+                            .flatMap(task -> {
+                                if (!Objects.equals(task.getReleaseId(), release.getReleaseId())) {
+                                    return Uni.createFrom().failure(new BadRequestException("Task is not part of this release"));
+                                }
+                                task.setReleaseId(null);
+                                task.setLastEdtiDate(DateUtil.nowSGT());
+                                return taskRepo.update(client, task).replaceWithVoid();
+                            })));
+        }));
     }
 
     // ─── Delete ───────────────────────────────────────────────────────────────
 
-    @WithTransaction
     public Uni<Void> delete(String groupAuthority, Long id) {
-        return resolveAccess(groupAuthority).flatMap(accesses -> {
+        return currentPool().flatMap(pool -> resolveAccess(groupAuthority).flatMap(accesses -> {
             if (!hasAccess(accesses, ACCESS_ADD)) {
                 return Uni.createFrom().failure(new ForbiddenException("Not authorized to delete a Task Release"));
             }
-            return releaseRepo.findById(id)
-                .onItem().ifNull().failWith(() -> new NotFoundException("Task Release " + id + " not found"))
-                .flatMap(release ->
-                    taskRepo.clearReleaseId(release.getReleaseId())
-                        .flatMap(ignored -> releaseRepo.delete(release)));
-        });
+            return pool.withTransaction(client ->
+                releaseRepo.findById(client, id)
+                    .onItem().ifNull().failWith(() -> new NotFoundException("Task Release " + id + " not found"))
+                    .flatMap(release ->
+                        taskRepo.clearReleaseId(client, release.getReleaseId())
+                            .flatMap(ignored -> releaseRepo.delete(client, release))));
+        }));
     }
 
     private boolean hasAccess(List<GroupAuthorityAccessDTO> accesses, String code) {
@@ -270,7 +282,7 @@ public class TaskReleaseService {
                 .anyMatch(a -> code.equals(a.getAccessCode()) && Boolean.TRUE.equals(a.getAccessValue()));
     }
 
-    private Uni<TaskReleaseResponse> doCreate(CreateTaskReleaseRequest req) {
+    private Uni<TaskReleaseResponse> doCreate(SqlClient client, CreateTaskReleaseRequest req) {
         return systemParameterClient
             .incrementVersion(new VersionIncrementRequestDTO(req.getReleaseType()))
             .flatMap(versionResult -> {
@@ -284,18 +296,18 @@ public class TaskReleaseService {
 
                 List<Long> jobTaskIds = req.getJobTaskIds() != null ? req.getJobTaskIds() : List.of();
 
-                return persistWithGeneratedReleaseId(release, 1)
+                return persistWithGeneratedReleaseId(client, release, 1)
                     .flatMap(savedRelease ->
                         Multi.createFrom().iterable(jobTaskIds)
                             .onItem().transformToUniAndConcatenate(id ->
-                                taskRepo.findById(id).flatMap(task -> {
+                                taskRepo.findById(client, id).flatMap(task -> {
                                     if (task == null) return Uni.createFrom().voidItem();
                                     task.setReleaseId(savedRelease.getReleaseId());
                                     task.setLastEdtiDate(DateUtil.nowSGT());
-                                    return Uni.createFrom().voidItem();
+                                    return taskRepo.update(client, task).replaceWithVoid();
                                 }))
                             .collect().asList()
-                            .flatMap(ignored -> taskRepo.countByReleaseId(savedRelease.getReleaseId()))
+                            .flatMap(ignored -> taskRepo.countByReleaseId(client, savedRelease.getReleaseId()))
                             .map(count -> toResponse(savedRelease, count)));
             });
     }
@@ -307,16 +319,16 @@ public class TaskReleaseService {
      * between generating and persisting, so on a unique-constraint failure specifically on
      * ReleaseId, regenerate and retry rather than failing the whole release creation.
      */
-    private Uni<TaskRelease> persistWithGeneratedReleaseId(TaskRelease release, int attempt) {
+    private Uni<TaskRelease> persistWithGeneratedReleaseId(SqlClient client, TaskRelease release, int attempt) {
         if (attempt > MAX_RELEASE_ID_ATTEMPTS) {
             return Uni.createFrom().failure(
                 new IllegalStateException("Unable to generate a unique Release ID, please try again"));
         }
-        return generateNextReleaseId().flatMap(candidateId -> {
+        return generateNextReleaseId(client).flatMap(candidateId -> {
             release.setReleaseId(candidateId);
-            return releaseRepo.persist(release)
+            return releaseRepo.insert(client, release)
                 .onFailure(this::isDuplicateReleaseId)
-                .recoverWithUni(e -> persistWithGeneratedReleaseId(release, attempt + 1));
+                .recoverWithUni(e -> persistWithGeneratedReleaseId(client, release, attempt + 1));
         });
     }
 
@@ -328,10 +340,10 @@ public class TaskReleaseService {
         return cause != null && cause.getMessage() != null && cause.getMessage().contains("ReleaseId");
     }
 
-    private Uni<String> generateNextReleaseId() {
+    private Uni<String> generateNextReleaseId(SqlClient client) {
         int year = DateUtil.nowSGT().getYear();
         String prefix = "REL-" + year + "-";
-        return releaseRepo.findByReleaseIdPrefix(prefix).map(existing -> {
+        return releaseRepo.findByReleaseIdPrefix(client, prefix).map(existing -> {
             int max = existing.stream()
                 .map(TaskRelease::getReleaseId)
                 .filter(Objects::nonNull)
@@ -362,9 +374,9 @@ public class TaskReleaseService {
         return resp;
     }
 
-    private Uni<TaskReleaseDetailResponse> buildDetail(TaskRelease release) {
-        return taskRepo.findByReleaseId(release.getReleaseId())
-            .flatMap(this::enrichWithStaff)
+    private Uni<TaskReleaseDetailResponse> buildDetail(SqlClient client, TaskRelease release) {
+        return taskRepo.findByReleaseId(client, release.getReleaseId())
+            .flatMap(tasks -> enrichWithStaff(client, tasks))
             .map(jobTasks -> toDetailResponse(release, (long) jobTasks.size(), jobTasks));
     }
 
@@ -385,10 +397,10 @@ public class TaskReleaseService {
         return resp;
     }
 
-    private Uni<List<JobTaskResponse>> enrichWithStaff(List<JobTask> tasks) {
+    private Uni<List<JobTaskResponse>> enrichWithStaff(SqlClient client, List<JobTask> tasks) {
         if (tasks.isEmpty()) return Uni.createFrom().item(List.of());
 
-        return staffRepo.findAllOrdered().map(staffList -> {
+        return staffRepo.findAllOrdered(client).map(staffList -> {
             Map<String, Staff> staffMap = staffList.stream()
                     .collect(Collectors.toMap(Staff::getStaffId, Function.identity()));
             return tasks.stream()

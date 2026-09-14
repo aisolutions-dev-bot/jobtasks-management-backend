@@ -2,7 +2,7 @@ package com.aisolutions.jobtaskmanagement.resource;
 
 import com.aisolutions.jobtaskmanagement.dto.JobTaskDTO.*;
 import com.aisolutions.jobtaskmanagement.service.JobTaskService;
-import com.aisolutions.jobtaskmanagement.service.auth.JwtClaimsExtractor;
+import com.aisolutions.jobtaskmanagement.service.auth.AccessControlService;
 import com.aisolutions.jobtaskmanagement.util.DeviceInfo;
 import com.aisolutions.jobtaskmanagement.util.DeviceInfoExtractor;
 
@@ -31,7 +31,7 @@ public class JobTaskResource {
     JobTaskService service;
 
     @Inject
-    JwtClaimsExtractor jwtClaimsExtractor;
+    AccessControlService accessControlService;
 
     @Context
     HttpHeaders headers;
@@ -60,8 +60,7 @@ public class JobTaskResource {
      */
     @GET
     public Uni<List<JobTaskResponse>> list() {
-        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
-        return service.listWithRbac(claims.groupAuthority(), claims.staffId());
+        return service.listWithRbac(accessControlService.getCurrentGroupAuthority(), accessControlService.getCurrentStaffId());
     }
 
     /**

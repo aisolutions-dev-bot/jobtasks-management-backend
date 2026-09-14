@@ -3,7 +3,7 @@ package com.aisolutions.jobtaskmanagement.resource;
 import com.aisolutions.jobtaskmanagement.dto.JobTaskDTO.JobTaskResponse;
 import com.aisolutions.jobtaskmanagement.dto.TaskReleaseDTO.*;
 import com.aisolutions.jobtaskmanagement.service.TaskReleaseService;
-import com.aisolutions.jobtaskmanagement.service.auth.JwtClaimsExtractor;
+import com.aisolutions.jobtaskmanagement.service.auth.AccessControlService;
 
 import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
@@ -29,7 +29,7 @@ public class TaskReleaseResource {
     TaskReleaseService service;
 
     @Inject
-    JwtClaimsExtractor jwtClaimsExtractor;
+    AccessControlService accessControlService;
 
     /**
      * GET /api/v1/task-releases
@@ -37,8 +37,7 @@ public class TaskReleaseResource {
      */
     @GET
     public Uni<Response> list() {
-        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
-        return service.listReleases(claims.groupAuthority())
+        return service.listReleases(accessControlService.getCurrentGroupAuthority())
                 .onItem().transform(r -> Response.ok(r).build())
                 .onFailure(ForbiddenException.class).recoverWithItem(e ->
                         Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", e.getMessage())).build())
@@ -58,11 +57,10 @@ public class TaskReleaseResource {
     public Uni<Response> releasableJobTasks(
             @QueryParam("statuses") String statuses,
             @QueryParam("search") String search) {
-        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
         List<String> statusList = statuses == null || statuses.isBlank()
                 ? List.of("Tested")
                 : Arrays.stream(statuses.split(",")).map(String::trim).filter(s -> !s.isBlank()).collect(Collectors.toList());
-        return service.getReleasableJobTasks(claims.groupAuthority(), statusList, search)
+        return service.getReleasableJobTasks(accessControlService.getCurrentGroupAuthority(), statusList, search)
                 .onItem().transform(r -> Response.ok(r).build())
                 .onFailure(ForbiddenException.class).recoverWithItem(e ->
                         Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", e.getMessage())).build())
@@ -80,8 +78,7 @@ public class TaskReleaseResource {
     @GET
     @Path("/next-release-id")
     public Uni<Response> previewNextReleaseId() {
-        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
-        return service.previewNextReleaseId(claims.groupAuthority())
+        return service.previewNextReleaseId(accessControlService.getCurrentGroupAuthority())
                 .onItem().transform(r -> Response.ok(r).build())
                 .onFailure(ForbiddenException.class).recoverWithItem(e ->
                         Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", e.getMessage())).build())
@@ -98,8 +95,7 @@ public class TaskReleaseResource {
      */
     @POST
     public Uni<Response> create(CreateTaskReleaseRequest req) {
-        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
-        return service.create(claims.groupAuthority(), req)
+        return service.create(accessControlService.getCurrentGroupAuthority(), req)
                 .onItem().transform(r -> Response.status(Response.Status.CREATED).entity(r).build())
                 .onFailure(ForbiddenException.class).recoverWithItem(e ->
                         Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", e.getMessage())).build())
@@ -117,8 +113,7 @@ public class TaskReleaseResource {
     @GET
     @Path("/{id}")
     public Uni<Response> getDetail(@PathParam("id") Long id) {
-        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
-        return service.getDetail(claims.groupAuthority(), id)
+        return service.getDetail(accessControlService.getCurrentGroupAuthority(), id)
                 .onItem().transform(r -> Response.ok(r).build())
                 .onFailure(ForbiddenException.class).recoverWithItem(e ->
                         Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", e.getMessage())).build())
@@ -138,8 +133,7 @@ public class TaskReleaseResource {
     @PUT
     @Path("/{id}")
     public Uni<Response> update(@PathParam("id") Long id, UpdateTaskReleaseRequest req) {
-        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
-        return service.update(claims.groupAuthority(), id, req)
+        return service.update(accessControlService.getCurrentGroupAuthority(), id, req)
                 .onItem().transform(r -> Response.ok(r).build())
                 .onFailure(ForbiddenException.class).recoverWithItem(e ->
                         Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", e.getMessage())).build())
@@ -161,8 +155,7 @@ public class TaskReleaseResource {
     @POST
     @Path("/{id}/tasks")
     public Uni<Response> addJobTasks(@PathParam("id") Long id, AddJobTasksRequest req) {
-        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
-        return service.addJobTasks(claims.groupAuthority(), id, req)
+        return service.addJobTasks(accessControlService.getCurrentGroupAuthority(), id, req)
                 .onItem().transform(r -> Response.ok(r).build())
                 .onFailure(ForbiddenException.class).recoverWithItem(e ->
                         Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", e.getMessage())).build())
@@ -182,8 +175,7 @@ public class TaskReleaseResource {
     @DELETE
     @Path("/{id}/tasks/{jobTaskUniqId}")
     public Uni<Response> removeJobTask(@PathParam("id") Long id, @PathParam("jobTaskUniqId") Long jobTaskUniqId) {
-        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
-        return service.removeJobTask(claims.groupAuthority(), id, jobTaskUniqId)
+        return service.removeJobTask(accessControlService.getCurrentGroupAuthority(), id, jobTaskUniqId)
                 .onItem().transform(v -> Response.noContent().build())
                 .onFailure(ForbiddenException.class).recoverWithItem(e ->
                         Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", e.getMessage())).build())
@@ -205,8 +197,7 @@ public class TaskReleaseResource {
     @DELETE
     @Path("/{id}")
     public Uni<Response> delete(@PathParam("id") Long id) {
-        JwtClaimsExtractor.JwtClaims claims = jwtClaimsExtractor.extract();
-        return service.delete(claims.groupAuthority(), id)
+        return service.delete(accessControlService.getCurrentGroupAuthority(), id)
                 .onItem().transform(v -> Response.noContent().build())
                 .onFailure(ForbiddenException.class).recoverWithItem(e ->
                         Response.status(Response.Status.FORBIDDEN).entity(Map.of("error", e.getMessage())).build())
