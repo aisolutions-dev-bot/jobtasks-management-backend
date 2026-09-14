@@ -1,45 +1,26 @@
 package com.aisolutions.jobtaskmanagement.entity;
 
-import io.quarkus.hibernate.reactive.panache.PanacheEntityBase;
-import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
 /**
- * Read-only mapping of m03Staff.
+ * Plain domain object for a read-only mapping of m03Staff. Mapped by hand
+ * from raw SqlClient rows (no Hibernate/Panache).
  *
  * PK is Code (bigint auto_increment).
  * StaffId is a separate varchar(25) unique field (e.g. "T6923", "SUPERDREW").
  * AssignorStaffID / AssigneeStaffID in m24JobTasks reference Code (not StaffId).
  */
-@Entity
-@Table(name = "m03Staff")
 @Getter
 @Setter
-public class Staff extends PanacheEntityBase {
+public class Staff {
 
-    @Id
-    @Column(name = "Code")
     private Long code;
-
-    @Column(name = "StaffId", unique = true, length = 25)
     private String staffId;
-
-    @Column(name = "Name")
     private String name;
-
-    @Column(name = "Department", length = 25)
     private String department;
-
-    @Column(name = "Appointment")
     private String appointment;
-
-    @Column(name = "AvatarColor", length = 10)
     private String avatarColor;
-
-    @Column(name = "TelMobile", length = 255)
     private String telMobile;
-
-    @Column(name = "EmailCompany", length = 255)
     private String emailCompany;
 }
