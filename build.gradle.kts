@@ -40,12 +40,16 @@ dependencies {
     // caching and rotation; GraalVM native safe)
     implementation("io.quarkus:quarkus-smallrye-jwt")
 
+    // Structured JSON console logs (defaults console to JSON once present) — pairs with
+    // the shared lib's RequestCorrelationFilter/exception mappers for Grafana/Loki
+    implementation("io.quarkus:quarkus-logging-json")
+
     // Lombok
     compileOnly("org.projectlombok:lombok:1.18.42")
     annotationProcessor("org.projectlombok:lombok:1.18.42")
 
-    // Shared library — 0.1.1 adds the tenancy package (CompanyPoolManager,
-    // CompanyDbLookupService, IdentityClaimsExtractor) used for multi-tenant DB routing.
+    // Shared library — the tenancy package (CompanyPoolManager, CompanyDbLookupService)
+    // and identity package (IdentityClaimsExtractor) power multi-tenant DB routing.
     implementation("com.aisolutions:ai-solutions-java-shared:0.2.2")
 
     // Email transport used by the shared EmailService (task notification emails)
