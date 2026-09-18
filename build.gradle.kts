@@ -55,6 +55,10 @@ dependencies {
     // Email transport used by the shared EmailService (task notification emails)
     implementation("com.sun.mail:jakarta.mail:2.0.1")
     implementation("jakarta.activation:jakarta.activation-api:2.1.3")
+    // JAF impl providing the multipart/mixed DataContentHandler in the uber-jar;
+    // com.sun.mail:jakarta.mail transitively pulls the older com.sun.activation impl
+    // instead, which drops the multipart handler when squashed into the uber-jar.
+    implementation("org.eclipse.angus:angus-activation:2.0.3")
 
     // FTP client
     implementation("commons-net:commons-net:3.10.0")
