@@ -25,9 +25,9 @@ import java.util.UUID;
  * {@link com.aisolutions.jobtaskmanagement.service.SystemParameterService}.
  *
  * Remote path structure:
- *   {FtpConfig.mainUrl}/{FtpConfig.folder}/{jobTaskId}/{uuid-filename.ext}
+ *   {mainUrl}/{moduleFolder}/{typeFolder}/{jobTaskId}/{uuid-filename.ext}
  * Example:
- *   /test.borneochemicalintl.com/JOBTASKS/JT-2026-0001/a1b2c3d4-invoice.pdf
+ *   /company-folder/jobtasks-attachments/JOBTASKS/JT-2026-0001/a1b2c3d4-invoice.pdf
  */
 @ApplicationScoped
 public class FTPStorageService {

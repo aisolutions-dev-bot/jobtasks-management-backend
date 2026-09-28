@@ -21,12 +21,13 @@ import java.util.List;
  * FTP credentials and paths are loaded from m07SystemParameters at runtime via
  * {@link SystemParameterService}. The required parameters are:
  *   ATTACHMENT-MODE          → must be "FTP"
- *   ATTACHMENT-MAIN-URL      → e.g. /test.borneochemicalintl.com
- *   ATTACHMENT-PATH-JOBTASKS → e.g. JOBTASKS
+ *   ATTACHMENT-MAIN-URL      → e.g. /company-folder
  *   FTP-HOST, FTP-USERNAME, FTP-PASSWORD
+ * Optional:
+ *   ATTACHMENT-PATH-JOBTASKS → e.g. JOBTASKS (defaults to the module type when absent)
  *
  * Final remote path per task:
- *   {ATTACHMENT-MAIN-URL}/{ATTACHMENT-PATH-JOBTASKS}/{jobTaskId}/{uuid-file.ext}
+ *   {ATTACHMENT-MAIN-URL}/jobtasks-attachments/{ATTACHMENT-PATH-JOBTASKS}/{jobTaskId}/{uuid-file.ext}
  */
 @ApplicationScoped
 public class AttachmentService {
@@ -34,6 +35,7 @@ public class AttachmentService {
     private static final Logger LOG           = Logger.getLogger(AttachmentService.class);
     /** Fixed module-level folder on the FTP server — never changes for this module. */
     private static final String MODULE_FOLDER = "jobtasks-attachments";
+    private static final String MODULE_TYPE   = "JOBTASKS";
 
     private static final List<String> ALLOWED_EXTENSIONS = List.of(
         ".pdf", ".doc", ".docx", ".xls", ".xlsx",
@@ -129,7 +131,7 @@ public class AttachmentService {
 
         return systemParameterService.loadFtpConfig()
             .flatMap(config -> {
-                String directoryPath = config.buildDirectory(MODULE_FOLDER, jobTaskId);
+                String directoryPath = config.buildDirectory(MODULE_FOLDER, MODULE_TYPE, jobTaskId);
                 LOG.infof("[Attachment] Uploading file for task: %s", jobTaskId);
 
                 // Step 1: upload to FTP (blocking I/O on worker thread)
