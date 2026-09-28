@@ -1,12 +1,14 @@
 package com.aisolutions.jobtaskmanagement.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import io.quarkus.runtime.annotations.RegisterForReflection;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
+@RegisterForReflection
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
