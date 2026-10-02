@@ -12,6 +12,7 @@ ARG GITHUB_TOKEN
 COPY gradlew ./gradlew
 COPY gradle/ ./gradle/
 COPY settings.gradle.kts build.gradle.kts gradle.properties ./
+COPY config/ ./config/
 COPY src/ src/
 
 RUN chmod +x ./gradlew && \
