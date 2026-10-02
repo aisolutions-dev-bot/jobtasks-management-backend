@@ -1,6 +1,12 @@
+import java.security.MessageDigest
+
 plugins {
     java
     id("io.quarkus")
+    id("com.diffplug.spotless") version "8.10.2"
+    checkstyle
+    pmd
+    jacoco
 }
 
 repositories {
@@ -52,13 +58,8 @@ dependencies {
     // and identity package (IdentityClaimsExtractor) power multi-tenant DB routing.
     implementation("com.aisolutions:ai-solutions-java-shared:0.2.8")
 
-    // Email transport used by the shared EmailService (task notification emails)
-    implementation("com.sun.mail:jakarta.mail:2.0.1")
-    implementation("jakarta.activation:jakarta.activation-api:2.1.3")
-    // JAF impl providing the multipart/mixed DataContentHandler in the uber-jar;
-    // com.sun.mail:jakarta.mail transitively pulls the older com.sun.activation impl
-    // instead, which drops the multipart handler when squashed into the uber-jar.
-    implementation("org.eclipse.angus:angus-activation:2.0.3")
+    implementation("io.quarkus:quarkus-messaging-kafka")
+    implementation("io.quarkus:quarkus-scheduler")
 
     // FTP client
     implementation("commons-net:commons-net:3.10.0")
@@ -71,6 +72,16 @@ dependencies {
     )
     testImplementation("io.quarkus:quarkus-junit5")
     testImplementation("io.quarkus:quarkus-junit5-mockito")
+    testImplementation("io.quarkus:quarkus-test-security-jwt")
+    testImplementation("io.rest-assured:rest-assured")
+    testImplementation("org.assertj:assertj-core:3.27.3")
+    testImplementation("org.testcontainers:mysql")
+    testImplementation("org.testcontainers:kafka")
+    testImplementation("org.testcontainers:junit-jupiter")
+    testImplementation("org.apache.kafka:kafka-clients")
+    // Testcontainers' JDBC readiness probe needs a blocking driver; the app only uses the
+    // reactive Vert.x MySQL client.
+    testRuntimeOnly("com.mysql:mysql-connector-j:9.4.0")
 }
 
 group = "com.aisolutions"
@@ -90,4 +101,95 @@ tasks.withType<JavaCompile> {
 tasks.withType<JavaCompile>().configureEach {
     options.compilerArgs.add("-Xlint:deprecation")
     options.isDeprecation = true
+}
+
+tasks.named<Test>("test") {
+    useJUnitPlatform {
+        excludeTags("e2e")
+    }
+}
+
+tasks.register<Test>("e2eTest") {
+    description = "Runs the built service process against real MySQL and Kafka containers."
+    group = "verification"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform {
+        includeTags("e2e")
+    }
+    shouldRunAfter(tasks.named("test"))
+    dependsOn(tasks.named("quarkusBuild"))
+    systemProperty("jobtasks.e2e.runner", layout.buildDirectory.file("quarkus-app/quarkus-run.jar").get().asFile)
+}
+
+// Only unchanged legacy Java files remain exempt while conventions are adopted.
+val legacyJavaBaseline = file("config/conventions/legacy-java-baseline.tsv")
+    .readLines()
+    .filter { it.isNotBlank() && !it.startsWith("#") }
+    .groupBy { line -> line.substringAfter('\t') }
+    .mapValues { (_, entries) -> entries.map { line -> line.substringBefore('\t') }.toSet() }
+val javaFilesRequiringConventions = files(provider {
+    fileTree("src") { include("**/*.java") }.files.filter { sourceFile ->
+        val sourcePath = sourceFile.relativeTo(projectDir).invariantSeparatorsPath
+        val currentDigest = MessageDigest.getInstance("SHA-256")
+            .digest(sourceFile.readBytes()).joinToString("") { "%02x".format(it) }
+        currentDigest !in legacyJavaBaseline[sourcePath].orEmpty()
+    }
+})
+
+spotless {
+    java {
+        target(javaFilesRequiringConventions)
+        palantirJavaFormat("2.97.0")
+        removeUnusedImports()
+        importOrder("java", "javax", "jakarta", "", "org.acme", "\\#")
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+}
+
+checkstyle {
+    toolVersion = "14.3.0"
+    configFile = file("config/checkstyle/checkstyle.xml")
+    isIgnoreFailures = false
+}
+
+pmd {
+    toolVersion = "7.28.0"
+    ruleSetFiles = files("config/pmd/ruleset.xml")
+    ruleSets = emptyList()
+    isIgnoreFailures = false
+}
+
+jacoco {
+    toolVersion = "0.8.15"
+}
+
+tasks.jacocoTestReport {
+    dependsOn(tasks.test)
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+    }
+}
+
+tasks.test {
+    finalizedBy(tasks.jacocoTestReport)
+}
+
+tasks.withType<Checkstyle>().configureEach {
+    setSource(javaFilesRequiringConventions.filter { it.path.contains("/src/${if (name == "checkstyleTest") "test" else "main"}/") })
+}
+
+tasks.withType<Pmd>().configureEach {
+    setSource(javaFilesRequiringConventions.filter { it.path.contains("/src/${if (name == "pmdTest") "test" else "main"}/") })
+}
+
+tasks.register<Copy>("installGitHooks") {
+    from("scripts/pre-commit", "scripts/commit-msg")
+    into(".git/hooks")
+    doLast {
+        file(".git/hooks/pre-commit").setExecutable(true)
+        file(".git/hooks/commit-msg").setExecutable(true)
+    }
 }

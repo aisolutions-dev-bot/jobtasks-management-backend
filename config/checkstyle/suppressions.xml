@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!DOCTYPE suppressions PUBLIC
+    "-//Checkstyle//DTD SuppressionFilter Configuration 1.2//EN"
+    "https://checkstyle.org/dtds/suppressions_1_2.dtd">
+
+<!--
+  Empty on purpose. Legacy files are exempted by content hash in
+  config/conventions/legacy-java-baseline.tsv so the exemption drops the moment a file is
+  edited. Do not add path-based suppressions here: a suppressed file would stay exempt after
+  being touched, which is the opposite of the convention.
+-->
+<suppressions>
+</suppressions>

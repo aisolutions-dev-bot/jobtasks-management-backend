@@ -1,0 +1,28 @@
+# Preview deployment for the VPS. Provider credentials belong to the Notification Service;
+# this service only publishes delivery requests to Kafka.
+services:
+  jobtasks-backend:
+    image: ghcr.io/aisolutions-dev-bot/jobtasks-management-backend:${IMAGE_TAG}
+    container_name: jobtasks-backend-preview
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8090:8090"
+    environment:
+      QUARKUS_PROFILE: prod
+      DB_URL: ${DB_URL_QUARKUS}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      ORG_SERVICE_URL: http://org-api-preview:8080
+      SERVICE_CLIENT_SECRET: ${SERVICE_CLIENT_JOBTASKS_SECRET}
+      SERVICE_ACCOUNT_USERNAME: ${SERVICE_ACCOUNT_USERNAME}
+      SERVICE_ACCOUNT_PASSWORD: ${SERVICE_ACCOUNT_PASSWORD}
+      KAFKA_BOOTSTRAP_SERVERS: ai-solutions-kafka-preview:9092
+      QUARKUS_HTTP_CORS_ORIGINS: https://preview.aisolutionspl.com
+    mem_limit: 768m
+    networks:
+      - aisolutions-preview
+
+networks:
+  aisolutions-preview:
+    name: aisolutions-preview
+    driver: bridge

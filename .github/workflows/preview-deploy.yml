@@ -10,7 +10,40 @@ env:
   IMAGE_TAG: ${{ github.sha }}
 
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Spotless, Checkstyle, PMD, tests
+        env:
+          GITHUB_ACTOR: BCIDev25
+          GITHUB_TOKEN: ${{ secrets.GHCR_PAT }}
+        run: ./gradlew spotlessCheck checkstyleMain checkstyleTest pmdMain pmdTest test e2eTest jacocoTestReport --no-daemon
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Diff coverage (70% on changed lines)
+        run: |
+          pip install diff-cover==10.5.1
+          REPORT=build/reports/jacoco/test/jacocoTestReport.xml
+          if [ -f "$REPORT" ]; then
+            diff-cover "$REPORT" --compare-branch=${{ github.event.before }} --fail-under=70
+          else
+            echo "No JaCoCo report ($REPORT not found). Skipping diff coverage."
+          fi
+
   build:
+    needs: quality
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -33,6 +66,11 @@ jobs:
     runs-on: [self-hosted, preview-vps]
     needs: build
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the version-controlled service configuration
+        run: install -m 644 deploy/jobtasks-backend.preview.yml /home/ubuntu/deploy/preview/jobtasks-backend.preview.yml
+
       - name: Login to GHCR
         run: echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u BCIDev25 --password-stdin
 
