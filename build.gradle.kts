@@ -177,12 +177,20 @@ tasks.test {
     finalizedBy(tasks.jacocoTestReport)
 }
 
+// Only the hand-written main and test source sets are narrowed to the baseline
+// filter. Quarkus-generated sources keep their plugin wiring, otherwise Gradle
+// reports the generated-sources lint tasks as consuming quarkusGenerateCode
+// output without a declared dependency and fails the image build.
 tasks.withType<Checkstyle>().configureEach {
-    setSource(javaFilesRequiringConventions.filter { it.path.contains("/src/${if (name == "checkstyleTest") "test" else "main"}/") })
+    if (name == "checkstyleMain" || name == "checkstyleTest") {
+        setSource(javaFilesRequiringConventions.filter { it.path.contains("/src/${if (name == "checkstyleTest") "test" else "main"}/") })
+    }
 }
 
 tasks.withType<Pmd>().configureEach {
-    setSource(javaFilesRequiringConventions.filter { it.path.contains("/src/${if (name == "pmdTest") "test" else "main"}/") })
+    if (name == "pmdMain" || name == "pmdTest") {
+        setSource(javaFilesRequiringConventions.filter { it.path.contains("/src/${if (name == "pmdTest") "test" else "main"}/") })
+    }
 }
 
 tasks.register<Copy>("installGitHooks") {
