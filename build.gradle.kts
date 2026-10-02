@@ -76,12 +76,15 @@ dependencies {
     testImplementation("io.rest-assured:rest-assured")
     testImplementation("org.assertj:assertj-core:3.27.3")
     testImplementation("org.testcontainers:mysql")
+    testImplementation("org.testcontainers:mariadb")
     testImplementation("org.testcontainers:kafka")
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.apache.kafka:kafka-clients")
     // Testcontainers' JDBC readiness probe needs a blocking driver; the app only uses the
     // reactive Vert.x MySQL client.
     testRuntimeOnly("com.mysql:mysql-connector-j:9.4.0")
+    // MariaDBContainer's readiness check needs its own driver; the app never uses it.
+    testRuntimeOnly("org.mariadb.jdbc:mariadb-java-client:3.5.6")
 }
 
 group = "com.aisolutions"

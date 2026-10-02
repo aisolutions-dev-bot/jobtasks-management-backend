@@ -1,6 +1,7 @@
 package com.aisolutions.jobtaskmanagement.common.notification;
 
 import java.net.URI;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -24,19 +25,32 @@ public class NotificationOutboxRepository {
     @Inject
     Pool defaultPool;
 
+    @Inject
+    OutboxRowLockClauseResolver rowLockClauseResolver;
+
     @ConfigProperty(name = "quarkus.datasource.reactive.url")
     String databaseUrl;
 
     @ConfigProperty(name = "notification.outbox.enabled", defaultValue = "true")
     boolean enabled;
 
-    private String tableName;
+    private static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(30);
 
-    /** Resolves the qualified table name and provisions its InnoDB schema before requests begin. */
+    private String tableName;
+    private OutboxRowLockClause rowLockClause = OutboxRowLockClause.FOR_UPDATE_SKIP_LOCKED;
+
+    /**
+     * Resolves the qualified table name, provisions its InnoDB schema and asks
+     * {@link OutboxRowLockClauseResolver} which row-lock clause the server accepts.
+     */
     void initialize(@Observes StartupEvent startupEvent) {
         tableName = resolveQualifiedTableName();
         if (enabled) {
-            provisionTable().await().atMost(java.time.Duration.ofSeconds(30));
+            provisionTable().await().atMost(STARTUP_TIMEOUT);
+            rowLockClause = rowLockClauseResolver
+                    .resolveRowLockClause(defaultPool)
+                    .await()
+                    .atMost(STARTUP_TIMEOUT);
         }
     }
 
@@ -58,10 +72,10 @@ public class NotificationOutboxRepository {
                 io.vertx.core.json.Json.encode(event.envelope()));
     }
 
-    /** Claims the oldest committed events while allowing other relay instances to skip locked rows. */
+    /** Claims the oldest committed events using the row-lock clause the connected server accepted. */
     public Uni<List<NotificationOutboxEvent>> lockBatch(SqlClient transaction, int batchSize) {
         String statement = "SELECT NotificationId,CompanyId,Channel,Payload FROM " + tableName
-                + " ORDER BY CreatedDate,NotificationId LIMIT ? FOR UPDATE SKIP LOCKED";
+                + " ORDER BY CreatedDate,NotificationId LIMIT ? " + rowLockClause.sqlClause();
         return transaction.preparedQuery(statement).execute(Tuple.of(batchSize)).map(this::mapEvents);
     }
 
