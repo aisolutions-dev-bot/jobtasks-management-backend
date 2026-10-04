@@ -3,6 +3,7 @@ package com.aisolutions.jobtaskmanagement.e2e;
 import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -13,7 +14,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Properties;
 import java.util.UUID;
 
@@ -49,6 +49,7 @@ class JobTaskNotificationOutboxE2E {
         "email-notifications", "sms-notifications", "whatsapp-notifications"
     };
 
+    /** Launches the service, waits for provisioning and verifies its committed Kafka delivery. */
     @Test
     void relaysCommittedOutboxRowToEmailTopic() throws Exception {
         try (MySQLContainer<?> mysql = startMySql();
@@ -56,12 +57,14 @@ class JobTaskNotificationOutboxE2E {
             createEmailTopic(kafka.getBootstrapServers());
             Process service = launchService(mysql, kafka);
             try {
-                awaitOutboxTable(mysql);
+                awaitOutboxTable(mysql, service);
                 String notificationId = UUID.randomUUID().toString();
                 insertOutboxRow(mysql, notificationId);
                 ConsumerRecord<String, String> record = awaitEmailRecord(kafka.getBootstrapServers(), notificationId);
                 assertThat(record.key()).isEqualTo(COMPANY_ID);
                 assertThat(record.value()).contains(notificationId).contains("Job Task E2E notification");
+            } catch (SQLException | InterruptedException | IllegalStateException | AssertionError failure) {
+                throw serviceFailure("The notification end-to-end check failed", service, failure);
             } finally {
                 service.destroyForcibly();
             }
@@ -101,11 +104,13 @@ class JobTaskNotificationOutboxE2E {
     /** Launches the built runner through buildServiceCommand with isolated dependency coordinates. */
     private Process launchService(MySQLContainer<?> mysql, KafkaContainer kafka) throws IOException {
         String nativeRunnerPath = System.getProperty("jobtasks.e2e.native-runner");
-        Path runner = Path.of(nativeRunnerPath == null ? System.getProperty("jobtasks.e2e.runner") : nativeRunnerPath);
+        Path runner = Path.of(nativeRunnerPath == null ? System.getProperty("jobtasks.e2e.runner") : nativeRunnerPath)
+                .toAbsolutePath();
         assertThat(new File(runner.toString())).exists();
         ProcessBuilder builder =
                 new ProcessBuilder(buildServiceCommand(runner, kafka.getBootstrapServers(), nativeRunnerPath != null));
-        builder.redirectOutput(Path.of("build", "e2e-service.log").toFile());
+        configureRuntimeIsolation(builder);
+        builder.redirectOutput(serviceLogPath().toFile());
         builder.redirectErrorStream(true);
         builder.environment().put("QUARKUS_PROFILE", "prod");
         builder.environment().put("DB_URL", reactiveUrl(mysql));
@@ -115,49 +120,64 @@ class JobTaskNotificationOutboxE2E {
         builder.environment().put("SERVICE_CLIENT_SECRET", "e2e-secret");
         builder.environment().put("ORG_SERVICE_URL", "http://127.0.0.1:1");
         builder.environment().put("QUARKUS_HTTP_PORT", Integer.toString(freePort()));
-        configureNativeKafkaChannels(builder, kafka.getBootstrapServers(), nativeRunnerPath != null);
         return builder.start();
     }
 
-    /** Selects the native executable or JVM runner and supplies broker settings. */
+    /** Builds the executable command and delegates exact Kafka options to appendChannelBootstrapProperties. */
     private List<String> buildServiceCommand(Path runner, String bootstrapServers, boolean nativeRunner) {
-        return nativeRunner ? List.of(runner.toString()) : buildJavaCommand(runner, bootstrapServers);
-    }
-
-    /** Builds the Java command and delegates exact broker options to appendChannelBootstrapProperties. */
-    private List<String> buildJavaCommand(Path runner, String bootstrapServers) {
         List<String> command = new ArrayList<>();
-        command.add("java");
+        command.add(nativeRunner ? runner.toString() : "java");
         appendChannelBootstrapProperties(command, bootstrapServers);
-        command.add("-jar");
-        command.add(runner.toString());
+        if (!nativeRunner) {
+            command.add("-jar");
+            command.add(runner.toString());
+        }
         return command;
     }
 
-    /** Supplies exact Kafka channel bootstrap settings to the native process environment. */
-    private void configureNativeKafkaChannels(ProcessBuilder builder, String bootstrapServers, boolean nativeRunner) {
-        if (nativeRunner) {
-            for (String channelName : NOTIFICATION_CHANNEL_NAMES) {
-                builder.environment().put(nativeKafkaBootstrapVariable(channelName), bootstrapServers);
-            }
-        }
-    }
-
-    /** Maps one outgoing channel property to its Quarkus environment variable. */
-    private String nativeKafkaBootstrapVariable(String channelName) {
-        return "MP_MESSAGING_OUTGOING_" + channelName.replace('-', '_').toUpperCase(Locale.ROOT) + "_BOOTSTRAP_SERVERS";
-    }
-
-    /** Adds exact hyphenated SmallRye config keys without environment-name ambiguity. */
+    /** Adds exact hyphenated SmallRye config keys for both native and JVM processes. */
     private void appendChannelBootstrapProperties(List<String> command, String bootstrapServers) {
         for (String channelName : NOTIFICATION_CHANNEL_NAMES) {
-            command.add("-D" + channelBootstrapServersKey(channelName) + "=" + bootstrapServers);
+            command.add("-Dmp.messaging.outgoing." + channelName + ".bootstrap.servers=" + bootstrapServers);
         }
     }
 
-    /** Builds the exact SmallRye config key that selects one channel's isolated broker. */
-    private String channelBootstrapServersKey(String channelName) {
-        return "mp.messaging.outgoing." + channelName + ".bootstrap.servers";
+    /** Removes inherited dependency overrides and starts outside project-local configuration files. */
+    private void configureRuntimeIsolation(ProcessBuilder builder) throws IOException {
+        Path runtimeDirectory = Path.of("build", "e2e-runtime").toAbsolutePath();
+        Files.createDirectories(runtimeDirectory);
+        builder.directory(runtimeDirectory.toFile());
+        builder.environment().keySet().removeIf(this::isDependencyOverride);
+    }
+
+    /** Identifies inherited application settings that could select a non-test database or broker. */
+    private boolean isDependencyOverride(String name) {
+        return name.startsWith("QUARKUS_")
+                || name.startsWith("MP_MESSAGING_")
+                || name.startsWith("KAFKA_")
+                || name.startsWith("NOTIFICATION_OUTBOX_")
+                || name.startsWith("DB_");
+    }
+
+    /** Returns the absolute service log path shared by startup and delivery failure diagnostics. */
+    private Path serviceLogPath() {
+        return Path.of("build", "e2e-service.log").toAbsolutePath();
+    }
+
+    /** Includes process state and the final service log lines without replacing the original failure. */
+    private IllegalStateException serviceFailure(String message, Process service, Throwable cause) {
+        String processState = service.isAlive() ? "running" : "exited with code " + service.exitValue();
+        return new IllegalStateException(message + "; process " + processState + "\n" + readServiceLogTail(), cause);
+    }
+
+    /** Reads the final service log lines, preserving a readable diagnostic when the file is unavailable. */
+    private String readServiceLogTail() {
+        try {
+            List<String> lines = Files.readAllLines(serviceLogPath());
+            return String.join("\n", lines.subList(Math.max(0, lines.size() - 80), lines.size()));
+        } catch (IOException failure) {
+            return "Service log unavailable: " + failure.getMessage();
+        }
     }
 
     /** Builds the reactive MySQL URL the service expects from its environment. */
@@ -173,9 +193,12 @@ class JobTaskNotificationOutboxE2E {
     }
 
     /** Waits until the service has provisioned its outbox table, which signals startup completion. */
-    private void awaitOutboxTable(MySQLContainer<?> mysql) throws Exception {
+    private void awaitOutboxTable(MySQLContainer<?> mysql, Process service) throws InterruptedException {
         Instant deadline = Instant.now().plus(STARTUP_TIMEOUT);
         while (Instant.now().isBefore(deadline)) {
+            if (!service.isAlive()) {
+                throw serviceFailure("The service exited before provisioning its outbox", service, null);
+            }
             if (outboxTableExists(mysql)) {
                 return;
             }

@@ -104,6 +104,16 @@ jobs:
           docker push ${{ env.IMAGE }}:${{ env.IMAGE_TAG }}
           docker push ${{ env.IMAGE }}:latest
 
+      - name: Preserve native notification verification diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jobtasks-native-notification-verification
+          path: |
+            build/e2e-service.log
+            build/test-results/e2eTest
+          if-no-files-found: ignore
+
   deploy:
     runs-on: [self-hosted, preview-vps]
     needs: build
