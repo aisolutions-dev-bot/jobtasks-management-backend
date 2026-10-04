@@ -68,7 +68,11 @@ public class JobTaskNotifier {
             return recordSkippedNotification(context, notification, "email", RECIPIENT_MISSING_REASON);
         }
         return notificationPublisher.enqueueEmailTemplate(
-                context, emailAddress, ASSIGNED_TEMPLATE_NAME, TEMPLATE_LANGUAGE_CODE, taskTemplateParameters(notification));
+                context,
+                emailAddress,
+                ASSIGNED_TEMPLATE_NAME,
+                TEMPLATE_LANGUAGE_CODE,
+                taskTemplateParameters(notification));
     }
 
     /** Stages the assignment SMS when the assignee has a mobile number. */
@@ -78,7 +82,11 @@ public class JobTaskNotifier {
             return recordSkippedNotification(context, notification, "sms", RECIPIENT_MISSING_REASON);
         }
         return notificationPublisher.enqueueSmsTemplate(
-                context, mobileNumber, ASSIGNED_TEMPLATE_NAME, TEMPLATE_LANGUAGE_CODE, taskTemplateParameters(notification));
+                context,
+                mobileNumber,
+                ASSIGNED_TEMPLATE_NAME,
+                TEMPLATE_LANGUAGE_CODE,
+                taskTemplateParameters(notification));
     }
 
     /** Stages the approved assignment template when the assignee has a mobile number. */
@@ -144,11 +152,16 @@ public class JobTaskNotifier {
                 task.getCompletedDate() == null ? "" : task.getCompletedDate().format(DATE_FORMAT);
         Map<String, Object> parameters = new LinkedHashMap<>();
         parameters.put("assignee_name", emptyIfNull(resolveAssigneeName(notification)));
-        parameters.put("assignor_name", emptyIfNull(
-                notification.assignor() == null ? UNKNOWN_STAFF_NAME : notification.assignor().getName()));
+        parameters.put(
+                "assignor_name",
+                emptyIfNull(
+                        notification.assignor() == null
+                                ? UNKNOWN_STAFF_NAME
+                                : notification.assignor().getName()));
         parameters.put("task_title", emptyIfNull(task.getTaskTitle()));
         parameters.put("job_task_id", emptyIfNull(task.getJobTaskId()));
-        parameters.put("priority", task.getPriority() == null ? "" : task.getPriority().toString());
+        parameters.put(
+                "priority", task.getPriority() == null ? "" : task.getPriority().toString());
         parameters.put("due_date", resolveDueDate(task));
         parameters.put("task_description", emptyIfNull(task.getTaskDescription()));
         parameters.put("completed_date", completedDate);
