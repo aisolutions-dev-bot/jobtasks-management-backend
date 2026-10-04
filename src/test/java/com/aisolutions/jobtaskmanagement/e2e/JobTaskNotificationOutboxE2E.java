@@ -11,7 +11,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Properties;
 import java.util.UUID;
 
@@ -43,6 +45,9 @@ class JobTaskNotificationOutboxE2E {
     private static final String COMPANY_ID = "db_test2";
     private static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(150);
     private static final Duration RECORD_TIMEOUT = Duration.ofSeconds(45);
+    private static final String[] NOTIFICATION_CHANNEL_NAMES = {
+        "email-notifications", "sms-notifications", "whatsapp-notifications"
+    };
 
     @Test
     void relaysCommittedOutboxRowToEmailTopic() throws Exception {
@@ -93,11 +98,13 @@ class JobTaskNotificationOutboxE2E {
         }
     }
 
-    /** Launches the built runner with container coordinates and a local HTTP port. */
+    /** Launches the built runner through buildServiceCommand with isolated dependency coordinates. */
     private Process launchService(MySQLContainer<?> mysql, KafkaContainer kafka) throws IOException {
-        Path runner = Path.of(System.getProperty("jobtasks.e2e.runner"));
+        String nativeRunnerPath = System.getProperty("jobtasks.e2e.native-runner");
+        Path runner = Path.of(nativeRunnerPath == null ? System.getProperty("jobtasks.e2e.runner") : nativeRunnerPath);
         assertThat(new File(runner.toString())).exists();
-        ProcessBuilder builder = new ProcessBuilder("java", "-jar", runner.toString());
+        ProcessBuilder builder =
+                new ProcessBuilder(buildServiceCommand(runner, kafka.getBootstrapServers(), nativeRunnerPath != null));
         builder.redirectOutput(Path.of("build", "e2e-service.log").toFile());
         builder.redirectErrorStream(true);
         builder.environment().put("QUARKUS_PROFILE", "prod");
@@ -108,7 +115,49 @@ class JobTaskNotificationOutboxE2E {
         builder.environment().put("SERVICE_CLIENT_SECRET", "e2e-secret");
         builder.environment().put("ORG_SERVICE_URL", "http://127.0.0.1:1");
         builder.environment().put("QUARKUS_HTTP_PORT", Integer.toString(freePort()));
+        configureNativeKafkaChannels(builder, kafka.getBootstrapServers(), nativeRunnerPath != null);
         return builder.start();
+    }
+
+    /** Selects the native executable or JVM runner and supplies broker settings. */
+    private List<String> buildServiceCommand(Path runner, String bootstrapServers, boolean nativeRunner) {
+        return nativeRunner ? List.of(runner.toString()) : buildJavaCommand(runner, bootstrapServers);
+    }
+
+    /** Builds the Java command and delegates exact broker options to appendChannelBootstrapProperties. */
+    private List<String> buildJavaCommand(Path runner, String bootstrapServers) {
+        List<String> command = new ArrayList<>();
+        command.add("java");
+        appendChannelBootstrapProperties(command, bootstrapServers);
+        command.add("-jar");
+        command.add(runner.toString());
+        return command;
+    }
+
+    /** Supplies exact Kafka channel bootstrap settings to the native process environment. */
+    private void configureNativeKafkaChannels(ProcessBuilder builder, String bootstrapServers, boolean nativeRunner) {
+        if (nativeRunner) {
+            for (String channelName : NOTIFICATION_CHANNEL_NAMES) {
+                builder.environment().put(nativeKafkaBootstrapVariable(channelName), bootstrapServers);
+            }
+        }
+    }
+
+    /** Maps one outgoing channel property to its Quarkus environment variable. */
+    private String nativeKafkaBootstrapVariable(String channelName) {
+        return "MP_MESSAGING_OUTGOING_" + channelName.replace('-', '_').toUpperCase(Locale.ROOT) + "_BOOTSTRAP_SERVERS";
+    }
+
+    /** Adds exact hyphenated SmallRye config keys without environment-name ambiguity. */
+    private void appendChannelBootstrapProperties(List<String> command, String bootstrapServers) {
+        for (String channelName : NOTIFICATION_CHANNEL_NAMES) {
+            command.add("-D" + channelBootstrapServersKey(channelName) + "=" + bootstrapServers);
+        }
+    }
+
+    /** Builds the exact SmallRye config key that selects one channel's isolated broker. */
+    private String channelBootstrapServersKey(String channelName) {
+        return "mp.messaging.outgoing." + channelName + ".bootstrap.servers";
     }
 
     /** Builds the reactive MySQL URL the service expects from its environment. */

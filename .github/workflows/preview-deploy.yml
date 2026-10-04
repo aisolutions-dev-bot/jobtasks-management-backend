@@ -57,7 +57,22 @@ jobs:
       - name: Build native image
         run: docker build -f Dockerfile.native --build-arg GITHUB_ACTOR=BCIDev25 --build-arg GITHUB_TOKEN=${{ secrets.GHCR_PAT }} -t ${{ env.IMAGE }}:${{ env.IMAGE_TAG }} -t ${{ env.IMAGE }}:latest .
 
-      - name: Push
+      - name: Extract native executable for end-to-end verification
+        run: |
+          mkdir -p build/native-e2e
+          container_id=$(docker create "${{ env.IMAGE }}:${{ env.IMAGE_TAG }}")
+          trap 'docker rm "$container_id"' EXIT
+          docker cp "$container_id:/app/application" build/native-e2e/jobtasks-service
+          chmod +x build/native-e2e/jobtasks-service
+
+      - name: Verify native outbox delivery
+        env:
+          GITHUB_ACTOR: BCIDev25
+          GITHUB_TOKEN: ${{ secrets.GHCR_PAT }}
+          JOBTASKS_NATIVE_RUNNER: ${{ github.workspace }}/build/native-e2e/jobtasks-service
+        run: ./gradlew e2eTest --no-daemon
+
+      - name: Push verified native image
         run: |
           docker push ${{ env.IMAGE }}:${{ env.IMAGE_TAG }}
           docker push ${{ env.IMAGE }}:latest

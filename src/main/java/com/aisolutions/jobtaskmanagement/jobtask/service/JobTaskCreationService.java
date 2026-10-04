@@ -5,19 +5,21 @@ import java.time.Year;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
-import com.aisolutions.jobtaskmanagement.common.notification.NotificationTransaction;
 import com.aisolutions.jobtaskmanagement.dto.JobTaskDTO.*;
 import com.aisolutions.jobtaskmanagement.entity.JobTask;
 import com.aisolutions.jobtaskmanagement.entity.Staff;
 import com.aisolutions.jobtaskmanagement.jobtask.mapper.JobTaskResponseMapper;
-import com.aisolutions.jobtaskmanagement.jobtask.service.JobTaskNotificationService.TaskNotification;
+import com.aisolutions.jobtaskmanagement.jobtask.service.notification.JobTaskNotifier;
+import com.aisolutions.jobtaskmanagement.jobtask.service.notification.JobTaskNotifier.TaskNotification;
 import com.aisolutions.jobtaskmanagement.repository.JobTaskRepository;
 import com.aisolutions.jobtaskmanagement.repository.StaffRepository;
 import com.aisolutions.jobtaskmanagement.service.auth.AccessControlService;
+import com.aisolutions.shared.notification.NotificationTransaction;
 import com.aisolutions.shared.tenancy.CompanyPoolManager;
 import com.aisolutions.shared.util.DateUtil;
 import io.smallrye.mutiny.Uni;
 import io.vertx.mutiny.sqlclient.SqlClient;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
  * Creates Job Tasks and queues the assignment notification in the same transaction.
@@ -37,7 +39,7 @@ public class JobTaskCreationService {
     StaffRepository staffRepo;
 
     @Inject
-    JobTaskNotificationService notificationService;
+    JobTaskNotifier jobTaskNotifier;
 
     @Inject
     CompanyPoolManager companyPoolManager;
@@ -48,14 +50,18 @@ public class JobTaskCreationService {
     @Inject
     JobTaskResponseMapper viewAssembler;
 
+    @ConfigProperty(name = "tenant.default-company-id", defaultValue = "db_test2")
+    String defaultCompanyId;
+
     /** Creates a new job task and notifies the assignee once it is persisted. */
     public Uni<JobTaskResponse> create(CreateJobTaskRequest request) {
         JobTask task = buildNewJobTaskEntity(request);
         String companyId = accessControlService.getCurrentCompanyId();
+        String notificationCompanyId = resolveNotificationCompanyId(companyId);
         return companyPoolManager
                 .poolFor(companyId)
                 .flatMap(pool -> pool.withTransaction(transaction -> createTaskWithResolvedStaff(
-                        new NotificationTransaction(transaction, companyId), task, request)));
+                        new NotificationTransaction(transaction, notificationCompanyId), task, request)));
     }
 
     /** Resolves both staff rows sequentially before persisting the task. */
@@ -91,8 +97,8 @@ public class JobTaskCreationService {
             NotificationTransaction context, JobTask task, Staff assignor, Staff assignee) {
         return taskRepo.insert(context.transaction(), task)
                 .flatMap(saved -> assignGeneratedJobTaskCode(context.transaction(), saved))
-                .call(updated -> notificationService.notifyTaskAssigned(
-                        context, new TaskNotification(updated, assignee, assignor)))
+                .call(updated ->
+                        jobTaskNotifier.notifyTaskAssigned(context, new TaskNotification(updated, assignee, assignor)))
                 .map(updated -> viewAssembler.toResponse(updated, assignor, assignee));
     }
 
@@ -100,5 +106,10 @@ public class JobTaskCreationService {
     private Uni<JobTask> assignGeneratedJobTaskCode(SqlClient client, JobTask saved) {
         saved.setJobTaskId(String.format("JT-%d-%04d", Year.now().getValue(), saved.getUniqId()));
         return taskRepo.update(client, saved);
+    }
+
+    /** Uses the request's company claim, defaulting to the main database when it is absent. */
+    private String resolveNotificationCompanyId(String companyId) {
+        return companyId == null || companyId.isBlank() ? defaultCompanyId : companyId;
     }
 }

@@ -6,17 +6,19 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.NotFoundException;
 
-import com.aisolutions.jobtaskmanagement.common.notification.NotificationTransaction;
 import com.aisolutions.jobtaskmanagement.dto.JobTaskDTO.*;
 import com.aisolutions.jobtaskmanagement.entity.JobTask;
 import com.aisolutions.jobtaskmanagement.jobtask.mapper.JobTaskResponseMapper;
-import com.aisolutions.jobtaskmanagement.jobtask.service.JobTaskNotificationService.TaskNotification;
+import com.aisolutions.jobtaskmanagement.jobtask.service.notification.JobTaskNotifier;
+import com.aisolutions.jobtaskmanagement.jobtask.service.notification.JobTaskNotifier.TaskNotification;
 import com.aisolutions.jobtaskmanagement.repository.JobTaskRepository;
 import com.aisolutions.jobtaskmanagement.repository.StaffRepository;
 import com.aisolutions.jobtaskmanagement.service.auth.AccessControlService;
+import com.aisolutions.shared.notification.NotificationTransaction;
 import com.aisolutions.shared.tenancy.CompanyPoolManager;
 import com.aisolutions.shared.util.DateUtil;
 import io.smallrye.mutiny.Uni;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
  * Applies Job Task status transitions and queues completion notifications atomically.
@@ -35,7 +37,7 @@ public class JobTaskStatusService {
     StaffRepository staffRepo;
 
     @Inject
-    JobTaskNotificationService notificationService;
+    JobTaskNotifier jobTaskNotifier;
 
     @Inject
     CompanyPoolManager companyPoolManager;
@@ -46,13 +48,17 @@ public class JobTaskStatusService {
     @Inject
     JobTaskResponseMapper viewAssembler;
 
+    @ConfigProperty(name = "tenant.default-company-id", defaultValue = "db_test2")
+    String defaultCompanyId;
+
     /** Updates a task's status, adjusting started and completed dates for the new status. */
     public Uni<JobTaskResponse> updateStatus(Long id, UpdateStatusRequest request) {
         String companyId = accessControlService.getCurrentCompanyId();
+        String notificationCompanyId = resolveNotificationCompanyId(companyId);
         return companyPoolManager
                 .poolFor(companyId)
-                .flatMap(pool -> pool.withTransaction(transaction ->
-                        updateTaskStatus(new NotificationTransaction(transaction, companyId), id, request)));
+                .flatMap(pool -> pool.withTransaction(transaction -> updateTaskStatus(
+                        new NotificationTransaction(transaction, notificationCompanyId), id, request)));
     }
 
     /** Loads the task and delegates status mutation to saveTaskStatus. */
@@ -120,7 +126,12 @@ public class JobTaskStatusService {
     private Uni<Void> queueCompletionIfRequested(
             NotificationTransaction context, TaskNotification notification, String newStatus) {
         return "Completed".equals(newStatus)
-                ? notificationService.notifyTaskCompleted(context, notification)
+                ? jobTaskNotifier.notifyTaskCompleted(context, notification)
                 : Uni.createFrom().voidItem();
+    }
+
+    /** Uses the request's company claim, defaulting to the main database when it is absent. */
+    private String resolveNotificationCompanyId(String companyId) {
+        return companyId == null || companyId.isBlank() ? defaultCompanyId : companyId;
     }
 }

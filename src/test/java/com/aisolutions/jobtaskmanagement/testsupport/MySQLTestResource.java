@@ -1,5 +1,6 @@
 package com.aisolutions.jobtaskmanagement.testsupport;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import io.quarkus.test.common.QuarkusTestResourceLifecycleManager;
@@ -8,14 +9,24 @@ import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * Starts ephemeral MySQL and Kafka containers for one test run.
+ * Starts an ephemeral MySQL container per test run, seeded from {@code schema.sql},
+ * and points {@code quarkus.datasource.reactive.*} at it before the app boots.
+ * {@link com.aisolutions.shared.tenancy.CompanyPoolManager} builds its pools from
+ * those same properties, so every repository call in a {@code QuarkusTest} lands
+ * on this container and the live database is never contacted.
  *
- * The MySQL container is seeded from {@code schema.sql}, a verbatim capture of the company
- * schema DDL, and its coordinates are published as the default datasource so
- * {@code CompanyPoolManager} routes every repository call to the container instead of the
- * live database.
+ * <p>The notification channels are pinned per channel rather than through
+ * {@code kafka.bootstrap.servers} alone: the workspace {@code
+ * export-quarkus.sh} exports {@code KAFKA_BOOTSTRAP_SERVERS}, and environment
+ * variables outrank this resource's config source, so a single shared key
+ * would silently send the relay to the ambient broker instead of the
+ * container.
  */
 public class MySQLTestResource implements QuarkusTestResourceLifecycleManager {
+
+    private static final String[] NOTIFICATION_CHANNEL_NAMES = {
+        "email-notifications", "sms-notifications", "whatsapp-notifications"
+    };
 
     private MySQLContainer<?> mysql;
     private KafkaContainer kafka;
@@ -39,12 +50,28 @@ public class MySQLTestResource implements QuarkusTestResourceLifecycleManager {
         String reactiveUrl =
                 String.format("mysql://%s:%d/%s", mysql.getHost(), mysql.getFirstMappedPort(), mysql.getDatabaseName());
 
-        return Map.of(
-                "quarkus.datasource.reactive.url", reactiveUrl,
-                "quarkus.datasource.username", mysql.getUsername(),
-                "quarkus.datasource.password", mysql.getPassword(),
-                "kafka.bootstrap.servers", kafka.getBootstrapServers(),
-                "notification.outbox.enabled", "true");
+        Map<String, String> configuration = new LinkedHashMap<>();
+        configuration.put("quarkus.datasource.reactive.url", reactiveUrl);
+        configuration.put("quarkus.datasource.username", mysql.getUsername());
+        configuration.put("quarkus.datasource.password", mysql.getPassword());
+        configuration.put("kafka.bootstrap.servers", kafka.getBootstrapServers());
+        configuration.put("notification.outbox.enabled", "true");
+        configuration.putAll(notificationChannelBootstrapServers(kafka.getBootstrapServers()));
+        return configuration;
+    }
+
+    /** Pins every notification channel to the container broker for this test run. */
+    private Map<String, String> notificationChannelBootstrapServers(String bootstrapServers) {
+        Map<String, String> channelConfiguration = new LinkedHashMap<>();
+        for (String channelName : NOTIFICATION_CHANNEL_NAMES) {
+            channelConfiguration.put(channelBootstrapServersKey(channelName), bootstrapServers);
+        }
+        return channelConfiguration;
+    }
+
+    /** Builds the SmallRye channel attribute key that overrides the shared broker address. */
+    private String channelBootstrapServersKey(String channelName) {
+        return "mp.messaging.outgoing." + channelName + ".bootstrap.servers";
     }
 
     /** Stops both isolated infrastructure containers after the application tests finish. */

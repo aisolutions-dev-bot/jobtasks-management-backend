@@ -56,7 +56,7 @@ dependencies {
 
     // Shared library — the tenancy package (CompanyPoolManager, CompanyDbLookupService)
     // and identity package (IdentityClaimsExtractor) power multi-tenant DB routing.
-    implementation("com.aisolutions:ai-solutions-java-shared:0.2.8")
+    implementation("com.aisolutions:ai-solutions-java-shared:0.6.0")
 
     implementation("io.quarkus:quarkus-messaging-kafka")
     implementation("io.quarkus:quarkus-scheduler")
@@ -123,6 +123,9 @@ tasks.register<Test>("e2eTest") {
     shouldRunAfter(tasks.named("test"))
     dependsOn(tasks.named("quarkusBuild"))
     systemProperty("jobtasks.e2e.runner", layout.buildDirectory.file("quarkus-app/quarkus-run.jar").get().asFile)
+    providers.environmentVariable("JOBTASKS_NATIVE_RUNNER").orNull?.let { nativeRunner ->
+        systemProperty("jobtasks.e2e.native-runner", nativeRunner)
+    }
 }
 
 // Only unchanged legacy Java files remain exempt while conventions are adopted.
