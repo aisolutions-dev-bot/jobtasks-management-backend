@@ -56,7 +56,7 @@ dependencies {
 
     // Shared library — the tenancy package (CompanyPoolManager, CompanyDbLookupService)
     // and identity package (IdentityClaimsExtractor) power multi-tenant DB routing.
-    implementation("com.aisolutions:ai-solutions-java-shared:0.6.1")
+    implementation("com.aisolutions:ai-solutions-java-shared:0.6.2")
 
     implementation("io.quarkus:quarkus-messaging-kafka")
     implementation("io.quarkus:quarkus-scheduler")
