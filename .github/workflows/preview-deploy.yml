@@ -26,7 +26,7 @@ jobs:
         env:
           GITHUB_ACTOR: BCIDev25
           GITHUB_TOKEN: ${{ secrets.GHCR_PAT }}
-        run: ./gradlew spotlessCheck checkstyleMain checkstyleTest pmdMain pmdTest test e2eTest jacocoTestReport --no-daemon
+        run: GITHUB_ACTOR=BCIDev25 ./gradlew spotlessCheck checkstyleMain checkstyleTest pmdMain pmdTest test e2eTest jacocoTestReport --no-daemon
 
       - uses: actions/setup-python@v5
         with:
@@ -72,7 +72,7 @@ jobs:
           GITHUB_ACTOR: BCIDev25
           GITHUB_TOKEN: ${{ secrets.GHCR_PAT }}
           JOBTASKS_NATIVE_RUNNER: ${{ github.workspace }}/build/native-e2e/jobtasks-service
-        run: ./gradlew e2eTest --no-daemon
+        run: GITHUB_ACTOR=BCIDev25 ./gradlew e2eTest --no-daemon
 
       - name: Push verified native image
         run: |
