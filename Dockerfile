@@ -21,9 +21,7 @@ ARG GITHUB_ACTOR
 ARG GITHUB_TOKEN
 
 # Build with environment variables for GitHub Packages
-RUN GITHUB_ACTOR=$GITHUB_ACTOR \
-  GITHUB_TOKEN=$GITHUB_TOKEN \
-  ./gradlew build -Dquarkus.package.jar.type=uber-jar \
+RUN ./gradlew build -Dquarkus.package.jar.type=uber-jar \
   -DquarkusPluginId=$QUARKUS_PLUGIN_ID \
   -DquarkusPluginVersion=$QUARKUS_PLUGIN_VERSION -x test
 
