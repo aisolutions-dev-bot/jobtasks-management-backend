@@ -16,9 +16,9 @@ import com.aisolutions.jobtaskmanagement.repository.StaffRepository;
 import com.aisolutions.jobtaskmanagement.service.auth.AccessControlService;
 import com.aisolutions.shared.notification.NotificationTransaction;
 import com.aisolutions.shared.tenancy.CompanyPoolManager;
+import com.aisolutions.shared.tenancy.DefaultTenantCompanyId;
 import com.aisolutions.shared.util.DateUtil;
 import io.smallrye.mutiny.Uni;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
  * Applies Job Task status transitions and queues completion notifications atomically.
@@ -48,7 +48,8 @@ public class JobTaskStatusService {
     @Inject
     JobTaskResponseMapper viewAssembler;
 
-    @ConfigProperty(name = "tenant.default-company-id", defaultValue = "db_test2")
+    @Inject
+    @DefaultTenantCompanyId
     String defaultCompanyId;
 
     /** Updates a task's status, adjusting started and completed dates for the new status. */

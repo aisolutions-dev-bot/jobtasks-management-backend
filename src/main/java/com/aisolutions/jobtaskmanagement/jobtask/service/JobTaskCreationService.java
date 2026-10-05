@@ -16,10 +16,10 @@ import com.aisolutions.jobtaskmanagement.repository.StaffRepository;
 import com.aisolutions.jobtaskmanagement.service.auth.AccessControlService;
 import com.aisolutions.shared.notification.NotificationTransaction;
 import com.aisolutions.shared.tenancy.CompanyPoolManager;
+import com.aisolutions.shared.tenancy.DefaultTenantCompanyId;
 import com.aisolutions.shared.util.DateUtil;
 import io.smallrye.mutiny.Uni;
 import io.vertx.mutiny.sqlclient.SqlClient;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
  * Creates Job Tasks and queues the assignment notification in the same transaction.
@@ -50,7 +50,8 @@ public class JobTaskCreationService {
     @Inject
     JobTaskResponseMapper viewAssembler;
 
-    @ConfigProperty(name = "tenant.default-company-id", defaultValue = "db_test2")
+    @Inject
+    @DefaultTenantCompanyId
     String defaultCompanyId;
 
     /** Creates a new job task and notifies the assignee once it is persisted. */

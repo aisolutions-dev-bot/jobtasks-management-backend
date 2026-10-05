@@ -17,9 +17,9 @@ import com.aisolutions.jobtaskmanagement.service.auth.AccessControlService;
 import com.aisolutions.jobtaskmanagement.util.DeviceInfo;
 import com.aisolutions.shared.notification.NotificationTransaction;
 import com.aisolutions.shared.tenancy.CompanyPoolManager;
+import com.aisolutions.shared.tenancy.DefaultTenantCompanyId;
 import com.aisolutions.shared.util.DateUtil;
 import io.smallrye.mutiny.Uni;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
  * Reassigns a Job Task to a new assignee and notifies that assignee.
@@ -53,7 +53,8 @@ public class JobTaskReassignmentService {
     @Inject
     JobTaskResponseMapper viewAssembler;
 
-    @ConfigProperty(name = "tenant.default-company-id", defaultValue = "db_test2")
+    @Inject
+    @DefaultTenantCompanyId
     String defaultCompanyId;
 
     /** Groups reassignment input and audit context without expanding helper signatures. */
