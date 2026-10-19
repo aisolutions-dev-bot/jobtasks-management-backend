@@ -136,7 +136,7 @@ jobs:
       - name: Health check
         run: |
           for i in $(seq 1 30); do
-            if timeout 2 bash -c '</dev/tcp/127.0.0.1/8083' 2>/dev/null; then
+            if timeout 2 bash -c '</dev/tcp/127.0.0.1/8090' 2>/dev/null; then
               echo "HEALTHY"; exit 0
             fi
             sleep 10
